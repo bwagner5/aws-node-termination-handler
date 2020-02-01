@@ -32,6 +32,7 @@ import (
 const (
 	scheduledMaintenance = "Scheduled Maintenance"
 	spotITN              = "Spot ITN"
+	acpi                 = "ACPI"
 )
 
 type monitorFunc func(chan<- drainevent.DrainEvent, chan<- drainevent.DrainEvent, *ec2metadata.EC2MetadataService) error
@@ -78,6 +79,7 @@ func main() {
 	if nthConfig.EnableScheduledEventDraining {
 		monitoringFns[scheduledMaintenance] = drainevent.MonitorForScheduledEvents
 	}
+	monitoringFns[acpi] = drainevent.MonitorForACPIEvents
 
 	for eventType, fn := range monitoringFns {
 		go func(monitorFn monitorFunc, eventType string) {

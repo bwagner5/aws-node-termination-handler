@@ -41,6 +41,9 @@ image:
 e2e-test:
 	${MAKEFILE_PATH}/test/k8s-local-cluster-test/run-test -b e2e-test -d
 
+build-acpi-test-server: create-build-dir
+	GOOS=${GOOS} GOARCH=${GOARCH} go build -a -o ${BUILD_DIR_PATH}/acpid-server ${MAKEFILE_PATH}/test/acpid-server/cmd/acpid-server.go
+
 compatibility-test:
 	${MAKEFILE_PATH}/test/k8s-compatibility-test/run-k8s-compatibility-test.sh -p "-d"
 

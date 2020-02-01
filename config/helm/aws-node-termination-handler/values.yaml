@@ -61,6 +61,9 @@ instanceMetadataURL: ""
 # (TESTING USE): Mount path for uptime file
 procUptimeFile: "/proc/uptime"
 
+# acpidSocketDir is the mount path for the directory where the acpid unix socket file exists
+acpidSocketDir: "/var/run"
+
 # nodeSelector tells the daemonset where to place the node-termination-handler
 # pods. By default, this value is empty and every node will receive a pod.
 nodeSelector: {}
