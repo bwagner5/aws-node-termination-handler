@@ -49,6 +49,8 @@ const (
 	SpotInterruptionTaint = "aws-node-termination-handler/spot-itn"
 	// ScheduledMaintenanceTaint is a taint used to make spot instance unschedulable
 	ScheduledMaintenanceTaint = "aws-node-termination-handler/scheduled-maintenance"
+	// ASGLifecycleTerminationTaint is a taint used to make instances about to be shutdown by ASG unschedulable
+	ASGLifecycleTerminationTaint = "aws-node-termination-handler/asg-lifecycle-termination"
 
 	maxTaintValueLength = 63
 )
