@@ -23,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
+	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/rs/zerolog/log"
 )
@@ -92,10 +93,14 @@ func MonitorForSQSTerminationEvents(interruptionChan chan<- InterruptionEvent, c
 func checkForSQSMessage() (*InterruptionEvent, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
+		Config: aws.Config{
+			Region: aws.String("us-east-1"),
+		},
 	}))
 
 	svc := sqs.New(sess)
 	asg := autoscaling.New(sess)
+	ec2Client := ec2.New(sess)
 
 	qURL := "https://sqs.us-east-1.amazonaws.com/896453262834/cth"
 
@@ -109,7 +114,7 @@ func checkForSQSMessage() (*InterruptionEvent, error) {
 	}
 
 	lifecycleEvent := ASGLifecycleTerminationEvent{}
-	err = json.Unmarshal([]byte(*messages[0].Body), lifecycleEvent)
+	err = json.Unmarshal([]byte(*messages[0].Body), &lifecycleEvent)
 	if err != nil {
 		return nil, err
 	}
@@ -117,19 +122,26 @@ func checkForSQSMessage() (*InterruptionEvent, error) {
 	if err != nil {
 		terminationTime = time.Now()
 	}
+	nodeName, err := retrieveNodeName(ec2Client, lifecycleEvent.Detail.EC2InstanceID)
+	if err != nil {
+		return nil, err
+	}
 	interruptionEvent := &InterruptionEvent{
 		EventID:     fmt.Sprintf("asg-lifecycle-term-%x", lifecycleEvent.ID),
 		Kind:        SQSTerminateKind,
 		StartTime:   terminationTime,
+		NodeName:    nodeName,
 		Description: fmt.Sprintf("ASG Lifecycle Termination event received. Instance will be interrupted at %s \n", terminationTime),
 	}
 
 	interruptionEvent.PreDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
-		err := n.TaintSpotItn(interruptionEvent.EventID)
+		err := n.TaintSpotItn(interruptionEvent.NodeName, interruptionEvent.EventID)
 		if err != nil {
 			log.Log().Msgf("Unable to taint node with taint %s:%s: %w", node.ASGLifecycleTerminationTaint, interruptionEvent.EventID, err)
 		}
-
+		return nil
+	}
+	interruptionEvent.PostDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
 		_, err = asg.CompleteLifecycleAction(&autoscaling.CompleteLifecycleActionInput{
 			AutoScalingGroupName:  &lifecycleEvent.Detail.AutoScalingGroupName,
 			LifecycleActionResult: aws.String("CONTINUE"),
@@ -184,4 +196,26 @@ func deleteMessages(svc *sqs.SQS, qURL string, messages []*sqs.Message) []error 
 
 	}
 	return errs
+}
+
+func retrieveNodeName(svc *ec2.EC2, instanceID string) (string, error) {
+	result, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
+		InstanceIds: []*string{
+			aws.String(instanceID),
+		},
+	})
+	if err != nil {
+		log.Log().Msgf("ERROR getting node name from ec2 api: %v", err)
+		return "", err
+	}
+	if len(result.Reservations) == 0 || len(result.Reservations[0].Instances) == 0 {
+		log.Log().Msg("ERROR could not find node from ec2 api")
+		return "", fmt.Errorf("No instance found with instance-id %s", instanceID)
+	}
+
+	instance := result.Reservations[0].Instances[0]
+	log.Log().Msgf("Got nodename from private ip %s", *instance.PrivateDnsName)
+	instanceJSON, _ := json.MarshalIndent(*instance, " ", "    ")
+	log.Log().Msgf("Got nodename from ec2: %s", instanceJSON)
+	return *instance.PrivateDnsName, nil
 }

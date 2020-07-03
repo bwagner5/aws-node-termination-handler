@@ -58,9 +58,10 @@ func checkForScheduledEvents(imds *ec2metadata.Service) ([]InterruptionEvent, er
 	if err != nil {
 		return nil, fmt.Errorf("Unable to parse metadata response: %w", err)
 	}
+	nodeName := imds.GetNodeMetadata().LocalHostname
 	events := make([]InterruptionEvent, 0)
 	for _, scheduledEvent := range scheduledEvents {
-		var preDrainFunc preDrainTask
+		var preDrainFunc drainTask
 		if isRestartEvent(scheduledEvent.Code) && !isStateCanceledOrCompleted(scheduledEvent.State) {
 			preDrainFunc = uncordonAfterRebootPreDrain
 		}
@@ -78,6 +79,7 @@ func checkForScheduledEvents(imds *ec2metadata.Service) ([]InterruptionEvent, er
 			Kind:         ScheduledEventKind,
 			Description:  fmt.Sprintf("%s will occur between %s and %s because %s\n", scheduledEvent.Code, scheduledEvent.NotBefore, scheduledEvent.NotAfter, scheduledEvent.Description),
 			State:        scheduledEvent.State,
+			NodeName:     nodeName,
 			StartTime:    notBefore,
 			EndTime:      notAfter,
 			PreDrainTask: preDrainFunc,
@@ -87,25 +89,26 @@ func checkForScheduledEvents(imds *ec2metadata.Service) ([]InterruptionEvent, er
 }
 
 func uncordonAfterRebootPreDrain(interruptionEvent InterruptionEvent, n node.Node) error {
-	err := n.MarkWithEventID(interruptionEvent.EventID)
+	nodeName := interruptionEvent.NodeName
+	err := n.MarkWithEventID(nodeName, interruptionEvent.EventID)
 	if err != nil {
 		return fmt.Errorf("Unable to mark node with event ID: %w", err)
 	}
 
-	err = n.TaintScheduledMaintenance(interruptionEvent.EventID)
+	err = n.TaintScheduledMaintenance(nodeName, interruptionEvent.EventID)
 	if err != nil {
 		return fmt.Errorf("Unable to taint node with taint %s:%s: %w", node.ScheduledMaintenanceTaint, interruptionEvent.EventID, err)
 	}
 
 	// if the node is already marked as unschedulable, then don't do anything
-	unschedulable, err := n.IsUnschedulable()
+	unschedulable, err := n.IsUnschedulable(nodeName)
 	if err == nil && unschedulable {
 		log.Log().Msg("Node is already marked unschedulable, not taking any action to add uncordon label.")
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("Encountered an error while checking if the node is unschedulable. Not setting an uncordon label: %w", err)
 	}
-	err = n.MarkForUncordonAfterReboot()
+	err = n.MarkForUncordonAfterReboot(nodeName)
 	if err != nil {
 		return fmt.Errorf("Unable to mark the node for uncordon: %w", err)
 	}

@@ -51,6 +51,7 @@ func checkForSpotInterruptionNotice(imds *ec2metadata.Service) (*InterruptionEve
 	if err != nil {
 		return nil, fmt.Errorf("There was a problem checking for spot ITNs: %w", err)
 	}
+	nodeName := imds.GetNodeMetadata().LocalHostname
 	interruptionTime, err := time.Parse(time.RFC3339, instanceAction.Time)
 	if err != nil {
 		return nil, fmt.Errorf("Could not parse time from spot interruption notice metadata json: %w", err)
@@ -60,19 +61,20 @@ func checkForSpotInterruptionNotice(imds *ec2metadata.Service) (*InterruptionEve
 	hash := sha256.New()
 	hash.Write([]byte(fmt.Sprintf("%v", instanceAction)))
 
-	var preDrainFunc preDrainTask = setInterruptionTaint
+	var preDrainFunc drainTask = setInterruptionTaint
 
 	return &InterruptionEvent{
 		EventID:      fmt.Sprintf("spot-itn-%x", hash.Sum(nil)),
 		Kind:         SpotITNKind,
 		StartTime:    interruptionTime,
+		NodeName:     nodeName,
 		Description:  fmt.Sprintf("Spot ITN received. Instance will be interrupted at %s \n", instanceAction.Time),
 		PreDrainTask: preDrainFunc,
 	}, nil
 }
 
 func setInterruptionTaint(interruptionEvent InterruptionEvent, n node.Node) error {
-	err := n.TaintSpotItn(interruptionEvent.EventID)
+	err := n.TaintSpotItn(interruptionEvent.NodeName, interruptionEvent.EventID)
 	if err != nil {
 		return fmt.Errorf("Unable to taint node with taint %s:%s: %w", node.ScheduledMaintenanceTaint, interruptionEvent.EventID, err)
 	}
