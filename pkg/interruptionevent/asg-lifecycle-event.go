@@ -18,13 +18,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aws/aws-node-termination-handler/pkg/ec2metadata"
 	"github.com/aws/aws-node-termination-handler/pkg/node"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
+	"github.com/aws/aws-sdk-go/service/autoscaling/autoscalingiface"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
 	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/aws/aws-sdk-go/service/sqs/sqsiface"
 	"github.com/rs/zerolog/log"
 )
 
@@ -76,36 +77,37 @@ type LifecycleDetail struct {
 	LifecycleTransition  string
 }
 
-// MonitorForSQSTerminationEvents continuously monitors SQS for events and sends interruption events to the passed in channel
-func MonitorForSQSTerminationEvents(interruptionChan chan<- InterruptionEvent, cancelChan chan<- InterruptionEvent, _ *ec2metadata.Service) error {
-	interruptionEvent, err := checkForSQSMessage()
+type SQSMonitor struct {
+	InterruptionChan chan<- InterruptionEvent
+	CancelChan       chan<- InterruptionEvent
+	QueueURL         string
+	SQS              sqsiface.SQSAPI
+	ASG              autoscalingiface.AutoScalingAPI
+	EC2              ec2iface.EC2API
+}
+
+// Monitor continuously monitors SQS for events and sends interruption events to the passed in channel
+func (m SQSMonitor) Monitor() error {
+	interruptionEvent, err := m.checkForSQSMessage()
 	if err != nil {
 		return err
 	}
 	if interruptionEvent != nil && interruptionEvent.Kind == SQSTerminateKind {
 		log.Log().Msgf("Sending %s interruption event to the interruption channel", SQSTerminateKind)
-		interruptionChan <- *interruptionEvent
+		m.InterruptionChan <- *interruptionEvent
 	}
 	return nil
 }
 
+func (m SQSMonitor) Kind() string {
+	return SQSTerminateKind
+}
+
 // checkForSpotInterruptionNotice Checks EC2 instance metadata for a spot interruption termination notice
-func checkForSQSMessage() (*InterruptionEvent, error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-		Config: aws.Config{
-			Region: aws.String("us-east-1"),
-		},
-	}))
-
-	svc := sqs.New(sess)
-	asg := autoscaling.New(sess)
-	ec2Client := ec2.New(sess)
-
-	qURL := "https://sqs.us-east-1.amazonaws.com/896453262834/cth"
+func (m SQSMonitor) checkForSQSMessage() (*InterruptionEvent, error) {
 
 	log.Log().Msg("Checking for queue messages")
-	messages, err := receiveQueueMessages(svc, qURL)
+	messages, err := m.receiveQueueMessages(m.QueueURL)
 	if err != nil {
 		fmt.Printf("Error while retrieving SQS messages: %v", err)
 	}
@@ -122,7 +124,7 @@ func checkForSQSMessage() (*InterruptionEvent, error) {
 	if err != nil {
 		terminationTime = time.Now()
 	}
-	nodeName, err := retrieveNodeName(ec2Client, lifecycleEvent.Detail.EC2InstanceID)
+	nodeName, err := m.retrieveNodeName(lifecycleEvent.Detail.EC2InstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +144,7 @@ func checkForSQSMessage() (*InterruptionEvent, error) {
 		return nil
 	}
 	interruptionEvent.PostDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
-		_, err = asg.CompleteLifecycleAction(&autoscaling.CompleteLifecycleActionInput{
+		_, err = m.ASG.CompleteLifecycleAction(&autoscaling.CompleteLifecycleActionInput{
 			AutoScalingGroupName:  &lifecycleEvent.Detail.AutoScalingGroupName,
 			LifecycleActionResult: aws.String("CONTINUE"),
 			LifecycleHookName:     &lifecycleEvent.Detail.LifecycleHookName,
@@ -152,7 +154,7 @@ func checkForSQSMessage() (*InterruptionEvent, error) {
 		if err != nil {
 			return err
 		}
-		errs := deleteMessages(svc, qURL, []*sqs.Message{messages[0]})
+		errs := m.deleteMessages([]*sqs.Message{messages[0]})
 		if errs != nil {
 			return errs[0]
 		}
@@ -162,8 +164,8 @@ func checkForSQSMessage() (*InterruptionEvent, error) {
 
 }
 
-func receiveQueueMessages(svc *sqs.SQS, qURL string) ([]*sqs.Message, error) {
-	result, err := svc.ReceiveMessage(&sqs.ReceiveMessageInput{
+func (m SQSMonitor) receiveQueueMessages(qURL string) ([]*sqs.Message, error) {
+	result, err := m.SQS.ReceiveMessage(&sqs.ReceiveMessageInput{
 		AttributeNames: []*string{
 			aws.String(sqs.MessageSystemAttributeNameSentTimestamp),
 		},
@@ -183,12 +185,12 @@ func receiveQueueMessages(svc *sqs.SQS, qURL string) ([]*sqs.Message, error) {
 	return result.Messages, nil
 }
 
-func deleteMessages(svc *sqs.SQS, qURL string, messages []*sqs.Message) []error {
+func (m SQSMonitor) deleteMessages(messages []*sqs.Message) []error {
 	var errs []error
 	for _, message := range messages {
-		_, err := svc.DeleteMessage(&sqs.DeleteMessageInput{
+		_, err := m.SQS.DeleteMessage(&sqs.DeleteMessageInput{
 			ReceiptHandle: message.ReceiptHandle,
-			QueueUrl:      &qURL,
+			QueueUrl:      &m.QueueURL,
 		})
 		if err != nil {
 			errs = append(errs, err)
@@ -198,8 +200,8 @@ func deleteMessages(svc *sqs.SQS, qURL string, messages []*sqs.Message) []error 
 	return errs
 }
 
-func retrieveNodeName(svc *ec2.EC2, instanceID string) (string, error) {
-	result, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
+func (m SQSMonitor) retrieveNodeName(instanceID string) (string, error) {
+	result, err := m.EC2.DescribeInstances(&ec2.DescribeInstancesInput{
 		InstanceIds: []*string{
 			aws.String(instanceID),
 		},

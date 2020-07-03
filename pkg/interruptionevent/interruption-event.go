@@ -39,3 +39,8 @@ type InterruptionEvent struct {
 func (e *InterruptionEvent) TimeUntilEvent() time.Duration {
 	return e.StartTime.Sub(time.Now())
 }
+
+type Monitor interface {
+	Monitor() error
+	Kind() string
+}

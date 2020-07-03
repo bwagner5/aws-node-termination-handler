@@ -27,6 +27,11 @@ import (
 	"github.com/aws/aws-node-termination-handler/pkg/node"
 	"github.com/aws/aws-node-termination-handler/pkg/observability"
 	"github.com/aws/aws-node-termination-handler/pkg/webhook"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/autoscaling"
+	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -88,28 +93,54 @@ func main() {
 	cancelChan := make(chan interruptionevent.InterruptionEvent)
 	defer close(cancelChan)
 
-	monitoringFns := map[string]monitorFunc{}
+	monitoringFns := map[string]interruptionevent.Monitor{}
 	if nthConfig.EnableSpotInterruptionDraining {
-		monitoringFns[spotITN] = interruptionevent.MonitorForSpotITNEvents
+		imdsSpotMonitor := interruptionevent.SpotInterruptionMonitoring{
+			IMDS:             imds,
+			NodeName:         nthConfig.NodeName,
+			InterruptionChan: interruptionChan,
+			CancelChan:       cancelChan,
+		}
+		monitoringFns[spotITN] = imdsSpotMonitor
 	}
 	if nthConfig.EnableScheduledEventDraining {
-		monitoringFns[scheduledMaintenance] = interruptionevent.MonitorForScheduledEvents
+		imdsScheduledEventMonitor := interruptionevent.ScheduledEventMonitoring{
+			IMDS:             imds,
+			NodeName:         nthConfig.NodeName,
+			InterruptionChan: interruptionChan,
+			CancelChan:       cancelChan,
+		}
+		monitoringFns[scheduledMaintenance] = imdsScheduledEventMonitor
 	}
 	if nthConfig.EnableSQSTerminationDraining {
-		monitoringFns[sqsEvents] = interruptionevent.MonitorForSQSTerminationEvents
+		sess := session.Must(session.NewSessionWithOptions(session.Options{
+			SharedConfigState: session.SharedConfigEnable,
+			Config: aws.Config{
+				Region: aws.String("us-east-1"),
+			},
+		}))
+		sqsMonitor := interruptionevent.SQSMonitor{
+			QueueURL:         "https://sqs.us-east-1.amazonaws.com/896453262834/cth",
+			InterruptionChan: interruptionChan,
+			CancelChan:       cancelChan,
+			SQS:              sqs.New(sess),
+			ASG:              autoscaling.New(sess),
+			EC2:              ec2.New(sess),
+		}
+		monitoringFns[sqsEvents] = sqsMonitor
 	}
 
-	for eventType, fn := range monitoringFns {
-		go func(monitorFn monitorFunc, eventType string) {
-			log.Log().Msgf("Started monitoring for %s events", eventType)
+	for _, fn := range monitoringFns {
+		go func(monitor interruptionevent.Monitor) {
+			log.Log().Msgf("Started monitoring for %s events", monitor.Kind())
 			for range time.Tick(time.Second * 2) {
-				err := monitorFn(interruptionChan, cancelChan, imds)
+				err := monitor.Monitor()
 				if err != nil {
-					log.Log().Msgf("There was a problem monitoring for %s events: %v", eventType, err)
-					metrics.ErrorEventsInc(eventType)
+					log.Log().Msgf("There was a problem monitoring for %s events: %v", monitor.Kind(), err)
+					metrics.ErrorEventsInc(monitor.Kind())
 				}
 			}
-		}(fn, eventType)
+		}(fn)
 	}
 
 	go watchForInterruptionEvents(interruptionChan, interruptionEventStore, nodeMetadata)

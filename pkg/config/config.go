@@ -50,7 +50,7 @@ const (
 	enableSpotInterruptionDrainingConfigKey = "ENABLE_SPOT_INTERRUPTION_DRAINING"
 	enableSpotInterruptionDrainingDefault   = true
 	enableSQSTerminationDrainingConfigKey   = "ENABLE_SQS_TERMINATION_DRAINING"
-	enableSQSTerminationDrainingDefault     = true
+	enableSQSTerminationDrainingDefault     = false
 	metadataTriesConfigKey                  = "METADATA_TRIES"
 	metadataTriesDefault                    = 3
 	cordonOnly                              = "CORDON_ONLY"

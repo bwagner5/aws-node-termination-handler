@@ -28,22 +28,33 @@ const (
 	SpotITNKind = "SPOT_ITN"
 )
 
-// MonitorForSpotITNEvents continuously monitors metadata for spot ITNs and sends interruption events to the passed in channel
-func MonitorForSpotITNEvents(interruptionChan chan<- InterruptionEvent, cancelChan chan<- InterruptionEvent, imds *ec2metadata.Service) error {
-	interruptionEvent, err := checkForSpotInterruptionNotice(imds)
+type SpotInterruptionMonitoring struct {
+	IMDS             *ec2metadata.Service
+	InterruptionChan chan<- InterruptionEvent
+	CancelChan       chan<- InterruptionEvent
+	NodeName         string
+}
+
+// Monitor continuously monitors metadata for spot ITNs and sends interruption events to the passed in channel
+func (m SpotInterruptionMonitoring) Monitor() error {
+	interruptionEvent, err := m.checkForSpotInterruptionNotice()
 	if err != nil {
 		return err
 	}
 	if interruptionEvent != nil && interruptionEvent.Kind == SpotITNKind {
 		log.Log().Msg("Sending interruption event to the interruption channel")
-		interruptionChan <- *interruptionEvent
+		m.InterruptionChan <- *interruptionEvent
 	}
 	return nil
 }
 
+func (m SpotInterruptionMonitoring) Kind() string {
+	return SpotITNKind
+}
+
 // checkForSpotInterruptionNotice Checks EC2 instance metadata for a spot interruption termination notice
-func checkForSpotInterruptionNotice(imds *ec2metadata.Service) (*InterruptionEvent, error) {
-	instanceAction, err := imds.GetSpotITNEvent()
+func (m SpotInterruptionMonitoring) checkForSpotInterruptionNotice() (*InterruptionEvent, error) {
+	instanceAction, err := m.IMDS.GetSpotITNEvent()
 	if instanceAction == nil && err == nil {
 		// if there are no spot itns and no errors
 		return nil, nil
@@ -51,7 +62,7 @@ func checkForSpotInterruptionNotice(imds *ec2metadata.Service) (*InterruptionEve
 	if err != nil {
 		return nil, fmt.Errorf("There was a problem checking for spot ITNs: %w", err)
 	}
-	nodeName := imds.GetNodeMetadata().LocalHostname
+	nodeName := m.NodeName
 	interruptionTime, err := time.Parse(time.RFC3339, instanceAction.Time)
 	if err != nil {
 		return nil, fmt.Errorf("Could not parse time from spot interruption notice metadata json: %w", err)
