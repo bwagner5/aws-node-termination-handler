@@ -36,6 +36,7 @@ import (
 const (
 	scheduledMaintenance = "Scheduled Maintenance"
 	spotITN              = "Spot ITN"
+	sqsEvents            = "SQS Termination Events"
 	timeFormat           = "2006/01/02 15:04:05"
 )
 
@@ -95,6 +96,9 @@ func main() {
 	if nthConfig.EnableScheduledEventDraining {
 		imdsScheduledEventMonitor := scheduledevent.NewScheduledEventMonitor(imds, interruptionChan, cancelChan, nthConfig.NodeName)
 		monitoringFns[scheduledMaintenance] = imdsScheduledEventMonitor
+	}
+	if nthConfig.EnableSQSTerminationDraining {
+		monitoringFns[sqsEvents] = interruptionevent.MonitorForSQSTerminationEvents
 	}
 
 	for _, fn := range monitoringFns {
@@ -211,6 +215,13 @@ func drainOrCordonIfNecessary(interruptionEventStore *interruptioneventstore.Sto
 		interruptionEventStore.MarkAllAsDrained(nodeName)
 		if nthConfig.WebhookURL != "" {
 			webhook.Post(nodeMetadata, drainEvent, nthConfig)
+		}
+		if drainEvent.PostDrainTask != nil {
+			err := drainEvent.PostDrainTask(*drainEvent, node)
+			if err != nil {
+				log.Log().Msgf("There was a problem executing the post-drain task: %v", err)
+			}
+			metrics.NodeActionsInc("post-drain", nodeName, err)
 		}
 	}
 }

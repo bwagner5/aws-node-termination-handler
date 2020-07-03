@@ -75,7 +75,11 @@ func (m SpotInterruptionMonitor) checkForSpotInterruptionNotice() (*monitor.Inte
 	if err != nil {
 		return nil, fmt.Errorf("There was a problem checking for spot ITNs: %w", err)
 	}
+<<<<<<< HEAD:pkg/monitor/spotitn/spot-itn-monitor.go
 	nodeName := m.NodeName
+=======
+	nodeName := imds.GetNodeMetadata().LocalHostname
+>>>>>>> this works to drain nodes from a central pods or group of pods:pkg/interruptionevent/spot-itn-event.go
 	interruptionTime, err := time.Parse(time.RFC3339, instanceAction.Time)
 	if err != nil {
 		return nil, fmt.Errorf("Could not parse time from spot interruption notice metadata json: %w", err)
@@ -85,7 +89,13 @@ func (m SpotInterruptionMonitor) checkForSpotInterruptionNotice() (*monitor.Inte
 	hash := sha256.New()
 	hash.Write([]byte(fmt.Sprintf("%v", instanceAction)))
 
+<<<<<<< HEAD:pkg/monitor/spotitn/spot-itn-monitor.go
 	return &monitor.InterruptionEvent{
+=======
+	var preDrainFunc drainTask = setInterruptionTaint
+
+	return &InterruptionEvent{
+>>>>>>> this works to drain nodes from a central pods or group of pods:pkg/interruptionevent/spot-itn-event.go
 		EventID:      fmt.Sprintf("spot-itn-%x", hash.Sum(nil)),
 		Kind:         SpotITNKind,
 		StartTime:    interruptionTime,
@@ -95,7 +105,11 @@ func (m SpotInterruptionMonitor) checkForSpotInterruptionNotice() (*monitor.Inte
 	}, nil
 }
 
+<<<<<<< HEAD:pkg/monitor/spotitn/spot-itn-monitor.go
 func setInterruptionTaint(interruptionEvent monitor.InterruptionEvent, n node.Node) error {
+=======
+func setInterruptionTaint(interruptionEvent InterruptionEvent, n node.Node) error {
+>>>>>>> this works to drain nodes from a central pods or group of pods:pkg/interruptionevent/spot-itn-event.go
 	err := n.TaintSpotItn(interruptionEvent.NodeName, interruptionEvent.EventID)
 	if err != nil {
 		return fmt.Errorf("Unable to taint node with taint %s:%s: %w", node.ScheduledMaintenanceTaint, interruptionEvent.EventID, err)

@@ -35,7 +35,7 @@ const (
 	instanceRetirementCode       = "instance-retirement"
 )
 
-// ScheduledEventMonitor is a struct definiiton that knows how to process scheduled events from IMDS
+// ScheduledEventMonitor is a struct definition that knows how to process scheduled events from IMDS
 type ScheduledEventMonitor struct {
 	IMDS             *ec2metadata.Service
 	InterruptionChan chan<- monitor.InterruptionEvent
