@@ -19,11 +19,7 @@ import (
 	"github.com/aws/aws-node-termination-handler/pkg/node"
 )
 
-<<<<<<< HEAD:pkg/monitor/types.go
 type DrainTask func(InterruptionEvent, node.Node) error
-=======
-type drainTask func(InterruptionEvent, node.Node) error
->>>>>>> this works to drain nodes from a central pods or group of pods:pkg/interruptionevent/interruption-event.go
 
 // InterruptionEvent gives more context of the interruption event
 type InterruptionEvent struct {
@@ -35,13 +31,8 @@ type InterruptionEvent struct {
 	StartTime     time.Time
 	EndTime       time.Time
 	Drained       bool
-<<<<<<< HEAD:pkg/monitor/types.go
 	PreDrainTask  DrainTask `json:"-"`
 	PostDrainTask DrainTask `json:"-"`
-=======
-	PreDrainTask  drainTask `json:"-"`
-	PostDrainTask drainTask `json:"-"`
->>>>>>> this works to drain nodes from a central pods or group of pods:pkg/interruptionevent/interruption-event.go
 }
 
 // TimeUntilEvent returns the duration until the event start time

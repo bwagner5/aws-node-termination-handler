@@ -22,6 +22,7 @@ import (
 
 	"github.com/aws/aws-node-termination-handler/pkg/config"
 	"github.com/aws/aws-node-termination-handler/pkg/ec2metadata"
+	"github.com/aws/aws-node-termination-handler/pkg/interruptionevent"
 	"github.com/aws/aws-node-termination-handler/pkg/interruptioneventstore"
 	"github.com/aws/aws-node-termination-handler/pkg/monitor"
 	"github.com/aws/aws-node-termination-handler/pkg/monitor/scheduledevent"
@@ -29,6 +30,11 @@ import (
 	"github.com/aws/aws-node-termination-handler/pkg/node"
 	"github.com/aws/aws-node-termination-handler/pkg/observability"
 	"github.com/aws/aws-node-termination-handler/pkg/webhook"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/autoscaling"
+	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -98,7 +104,21 @@ func main() {
 		monitoringFns[scheduledMaintenance] = imdsScheduledEventMonitor
 	}
 	if nthConfig.EnableSQSTerminationDraining {
-		monitoringFns[sqsEvents] = interruptionevent.MonitorForSQSTerminationEvents
+		sess := session.Must(session.NewSessionWithOptions(session.Options{
+			SharedConfigState: session.SharedConfigEnable,
+			Config: aws.Config{
+				Region: aws.String("us-east-1"),
+			},
+		}))
+		sqsMonitor := interruptionevent.SQSMonitor{
+			QueueURL:         "https://sqs.us-east-1.amazonaws.com/896453262834/cth",
+			InterruptionChan: interruptionChan,
+			CancelChan:       cancelChan,
+			SQS:              sqs.New(sess),
+			ASG:              autoscaling.New(sess),
+			EC2:              ec2.New(sess),
+		}
+		monitoringFns[sqsEvents] = sqsMonitor
 	}
 
 	for _, fn := range monitoringFns {
