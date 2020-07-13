@@ -34,15 +34,26 @@ const (
 	instanceRetirementCode       = "instance-retirement"
 )
 
-type ScheduledEventMonitoring struct {
+// ScheduledEventMonitor is a struct definiiton that knows how to process scheduled events from IMDS
+type ScheduledEventMonitor struct {
 	IMDS             *ec2metadata.Service
 	InterruptionChan chan<- InterruptionEvent
 	CancelChan       chan<- InterruptionEvent
 	NodeName         string
 }
 
-// MonitorForScheduledEvents continuously monitors metadata for scheduled events and sends interruption events to the passed in channel
-func (m ScheduledEventMonitoring) Monitor() error {
+// NewScheduledEventMonitor creates an instance of a scheduled event monitor
+func NewScheduledEventMonitor(imds *ec2metadata.Service, interruptionChan chan<- InterruptionEvent, cancelChan chan<- InterruptionEvent, nodeName string) ScheduledEventMonitor {
+	return ScheduledEventMonitor{
+		IMDS:             imds,
+		InterruptionChan: interruptionChan,
+		CancelChan:       cancelChan,
+		NodeName:         nodeName,
+	}
+}
+
+// Monitor continuously monitors metadata for scheduled events and sends interruption events to the passed in channel
+func (m ScheduledEventMonitor) Monitor() error {
 	interruptionEvents, err := m.checkForScheduledEvents()
 	if err != nil {
 		return err
@@ -59,12 +70,13 @@ func (m ScheduledEventMonitoring) Monitor() error {
 	return nil
 }
 
-func (m ScheduledEventMonitoring) Kind() string {
+// Kind denotes the kind of event that is processed
+func (m ScheduledEventMonitor) Kind() string {
 	return ScheduledEventKind
 }
 
 // checkForScheduledEvents Checks EC2 instance metadata for a scheduled event requiring a node drain
-func (m ScheduledEventMonitoring) checkForScheduledEvents() ([]InterruptionEvent, error) {
+func (m ScheduledEventMonitor) checkForScheduledEvents() ([]InterruptionEvent, error) {
 	scheduledEvents, err := m.IMDS.GetScheduledMaintenanceEvents()
 	if err != nil {
 		return nil, fmt.Errorf("Unable to parse metadata response: %w", err)

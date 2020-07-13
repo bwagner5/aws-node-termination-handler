@@ -28,15 +28,26 @@ const (
 	SpotITNKind = "SPOT_ITN"
 )
 
-type SpotInterruptionMonitoring struct {
+// SpotInterruptionMonitor is a struct definition which facilitates monitoring of spot ITNs from IMDS
+type SpotInterruptionMonitor struct {
 	IMDS             *ec2metadata.Service
 	InterruptionChan chan<- InterruptionEvent
 	CancelChan       chan<- InterruptionEvent
 	NodeName         string
 }
 
+// NewSpotInterruptionMonitor creates an instance of a spot ITN IMDS monitor
+func NewSpotInterruptionMonitor(imds *ec2metadata.Service, interruptionChan chan<- InterruptionEvent, cancelChan chan<- InterruptionEvent, nodeName string) SpotInterruptionMonitor {
+	return SpotInterruptionMonitor{
+		IMDS:             imds,
+		InterruptionChan: interruptionChan,
+		CancelChan:       cancelChan,
+		NodeName:         nodeName,
+	}
+}
+
 // Monitor continuously monitors metadata for spot ITNs and sends interruption events to the passed in channel
-func (m SpotInterruptionMonitoring) Monitor() error {
+func (m SpotInterruptionMonitor) Monitor() error {
 	interruptionEvent, err := m.checkForSpotInterruptionNotice()
 	if err != nil {
 		return err
@@ -48,12 +59,13 @@ func (m SpotInterruptionMonitoring) Monitor() error {
 	return nil
 }
 
-func (m SpotInterruptionMonitoring) Kind() string {
+// Kind denotes the kind of event that is processed
+func (m SpotInterruptionMonitor) Kind() string {
 	return SpotITNKind
 }
 
 // checkForSpotInterruptionNotice Checks EC2 instance metadata for a spot interruption termination notice
-func (m SpotInterruptionMonitoring) checkForSpotInterruptionNotice() (*InterruptionEvent, error) {
+func (m SpotInterruptionMonitor) checkForSpotInterruptionNotice() (*InterruptionEvent, error) {
 	instanceAction, err := m.IMDS.GetSpotITNEvent()
 	if instanceAction == nil && err == nil {
 		// if there are no spot itns and no errors

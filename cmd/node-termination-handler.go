@@ -95,21 +95,11 @@ func main() {
 
 	monitoringFns := map[string]interruptionevent.Monitor{}
 	if nthConfig.EnableSpotInterruptionDraining {
-		imdsSpotMonitor := interruptionevent.SpotInterruptionMonitoring{
-			IMDS:             imds,
-			NodeName:         nthConfig.NodeName,
-			InterruptionChan: interruptionChan,
-			CancelChan:       cancelChan,
-		}
+		imdsSpotMonitor := interruptionevent.NewSpotInterruptionMonitor(imds, interruptionChan, cancelChan, nthConfig.NodeName)
 		monitoringFns[spotITN] = imdsSpotMonitor
 	}
 	if nthConfig.EnableScheduledEventDraining {
-		imdsScheduledEventMonitor := interruptionevent.ScheduledEventMonitoring{
-			IMDS:             imds,
-			NodeName:         nthConfig.NodeName,
-			InterruptionChan: interruptionChan,
-			CancelChan:       cancelChan,
-		}
+		imdsScheduledEventMonitor := interruptionevent.NewScheduledEventMonitor(imds, interruptionChan, cancelChan, nthConfig.NodeName)
 		monitoringFns[scheduledMaintenance] = imdsScheduledEventMonitor
 	}
 	if nthConfig.EnableSQSTerminationDraining {
