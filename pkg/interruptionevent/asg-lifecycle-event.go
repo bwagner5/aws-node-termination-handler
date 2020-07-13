@@ -139,7 +139,7 @@ func (m SQSMonitor) checkForSQSMessage() (*InterruptionEvent, error) {
 	interruptionEvent.PreDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
 		err := n.TaintSpotItn(interruptionEvent.NodeName, interruptionEvent.EventID)
 		if err != nil {
-			log.Log().Msgf("Unable to taint node with taint %s:%s: %w", node.ASGLifecycleTerminationTaint, interruptionEvent.EventID, err)
+			log.Log().Msgf("Unable to taint node with taint %s:%s: %v", node.ASGLifecycleTerminationTaint, interruptionEvent.EventID, err)
 		}
 		return nil
 	}
