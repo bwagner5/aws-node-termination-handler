@@ -55,8 +55,8 @@ const (
 //   }
 // }
 
-// ASGLifecycleTerminationEvent is a structure to hold ASG lifecycle termination events sent from EventBridge to SQS
-type ASGLifecycleTerminationEvent struct {
+// EventBridgeEvent is a structure to hold generic event details from Amazon EventBridge
+type EventBridgeEvent struct {
 	Version    string          `json:"version"`
 	ID         string          `json:"id"`
 	DetailType string          `json:"detail-type"`
@@ -65,7 +65,15 @@ type ASGLifecycleTerminationEvent struct {
 	Time       string          `json:"time"`
 	Region     string          `json:"region"`
 	Resources  []string        `json:"resources"`
-	Detail     LifecycleDetail `json:"detail"`
+	Detail     json.RawMessage `json:"detail"`
+}
+
+func (e EventBridgeEvent) getTime() time.Time {
+	terminationTime, err := time.Parse(time.RFC3339, e.Time)
+	if err != nil {
+		return time.Now()
+	}
+	return terminationTime
 }
 
 // LifecycleDetail provides the ASG lifecycle event details
@@ -77,6 +85,13 @@ type LifecycleDetail struct {
 	LifecycleTransition  string
 }
 
+// SpotInterruptionDetail holds the event details for spot interruption events from Amazon EventBridge
+type SpotInterruptionDetail struct {
+	InstanceID     string `json:"instance-id"`
+	InstanceAction string `json:"instance-action"`
+}
+
+// SQSMonitor is a struct definiiton that knows how to process events from Amazon EventBridge
 type SQSMonitor struct {
 	InterruptionChan chan<- InterruptionEvent
 	CancelChan       chan<- InterruptionEvent
@@ -99,11 +114,12 @@ func (m SQSMonitor) Monitor() error {
 	return nil
 }
 
+// Kind denotes the kind of event that is processed
 func (m SQSMonitor) Kind() string {
 	return SQSTerminateKind
 }
 
-// checkForSpotInterruptionNotice Checks EC2 instance metadata for a spot interruption termination notice
+// checkForSpotInterruptionNotice checks sqs for new messages and returns interruption events
 func (m SQSMonitor) checkForSQSMessage() (*InterruptionEvent, error) {
 
 	log.Log().Msg("Checking for queue messages")
@@ -115,27 +131,69 @@ func (m SQSMonitor) checkForSQSMessage() (*InterruptionEvent, error) {
 		return nil, nil
 	}
 
-	lifecycleEvent := ASGLifecycleTerminationEvent{}
-	err = json.Unmarshal([]byte(*messages[0].Body), &lifecycleEvent)
+	event := EventBridgeEvent{}
+	err = json.Unmarshal([]byte(*messages[0].Body), &event)
 	if err != nil {
 		return nil, err
-	}
-	terminationTime, err := time.Parse(time.RFC3339, lifecycleEvent.Time)
-	if err != nil {
-		terminationTime = time.Now()
-	}
-	nodeName, err := m.retrieveNodeName(lifecycleEvent.Detail.EC2InstanceID)
-	if err != nil {
-		return nil, err
-	}
-	interruptionEvent := &InterruptionEvent{
-		EventID:     fmt.Sprintf("asg-lifecycle-term-%x", lifecycleEvent.ID),
-		Kind:        SQSTerminateKind,
-		StartTime:   terminationTime,
-		NodeName:    nodeName,
-		Description: fmt.Sprintf("ASG Lifecycle Termination event received. Instance will be interrupted at %s \n", terminationTime),
 	}
 
+	interruptionEvent := InterruptionEvent{}
+
+	switch event.Source {
+	case "aws.autoscaling":
+		interruptionEvent, err = m.asgTerminationToInterruptionEvent(event, messages)
+		if err != nil {
+			return nil, err
+		}
+	case "aws.ec2":
+		interruptionEvent, err = m.spotITNTerminationToInterruptionEvent(event, messages)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("Event source (%s) is not supported", event.Source)
+	}
+
+	return &interruptionEvent, err
+}
+
+func (m SQSMonitor) asgTerminationToInterruptionEvent(event EventBridgeEvent, messages []*sqs.Message) (InterruptionEvent, error) {
+	lifecycleDetail := &LifecycleDetail{}
+	err := json.Unmarshal(event.Detail, lifecycleDetail)
+	if err != nil {
+		return InterruptionEvent{}, err
+	}
+
+	nodeName, err := m.retrieveNodeName(lifecycleDetail.EC2InstanceID)
+	if err != nil {
+		return InterruptionEvent{}, err
+	}
+
+	interruptionEvent := InterruptionEvent{
+		EventID:     fmt.Sprintf("asg-lifecycle-term-%x", event.ID),
+		Kind:        SQSTerminateKind,
+		StartTime:   event.getTime(),
+		NodeName:    nodeName,
+		Description: fmt.Sprintf("ASG Lifecycle Termination event received. Instance will be interrupted at %s \n", event.getTime()),
+	}
+
+	interruptionEvent.PostDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
+		_, err = m.ASG.CompleteLifecycleAction(&autoscaling.CompleteLifecycleActionInput{
+			AutoScalingGroupName:  &lifecycleDetail.AutoScalingGroupName,
+			LifecycleActionResult: aws.String("CONTINUE"),
+			LifecycleHookName:     &lifecycleDetail.LifecycleHookName,
+			LifecycleActionToken:  &lifecycleDetail.LifecycleActionToken,
+			InstanceId:            &lifecycleDetail.EC2InstanceID,
+		})
+		if err != nil {
+			return err
+		}
+		errs := m.deleteMessages(messages)
+		if errs != nil {
+			return errs[0]
+		}
+		return nil
+	}
 	interruptionEvent.PreDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
 		err := n.TaintSpotItn(interruptionEvent.NodeName, interruptionEvent.EventID)
 		if err != nil {
@@ -143,25 +201,44 @@ func (m SQSMonitor) checkForSQSMessage() (*InterruptionEvent, error) {
 		}
 		return nil
 	}
+
+	return interruptionEvent, nil
+}
+
+func (m SQSMonitor) spotITNTerminationToInterruptionEvent(event EventBridgeEvent, messages []*sqs.Message) (InterruptionEvent, error) {
+	spotInterruptionDetail := &SpotInterruptionDetail{}
+	err := json.Unmarshal(event.Detail, spotInterruptionDetail)
+	if err != nil {
+		return InterruptionEvent{}, err
+	}
+
+	nodeName, err := m.retrieveNodeName(spotInterruptionDetail.InstanceID)
+	if err != nil {
+		return InterruptionEvent{}, err
+	}
+
+	interruptionEvent := InterruptionEvent{
+		EventID:     fmt.Sprintf("spot-itn-event-%x", event.ID),
+		Kind:        SQSTerminateKind,
+		StartTime:   event.getTime(),
+		NodeName:    nodeName,
+		Description: fmt.Sprintf("Spot Interruption event received. Instance will be interrupted at %s \n", event.getTime()),
+	}
 	interruptionEvent.PostDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
-		_, err = m.ASG.CompleteLifecycleAction(&autoscaling.CompleteLifecycleActionInput{
-			AutoScalingGroupName:  &lifecycleEvent.Detail.AutoScalingGroupName,
-			LifecycleActionResult: aws.String("CONTINUE"),
-			LifecycleHookName:     &lifecycleEvent.Detail.LifecycleHookName,
-			LifecycleActionToken:  &lifecycleEvent.Detail.LifecycleActionToken,
-			InstanceId:            &lifecycleEvent.Detail.EC2InstanceID,
-		})
-		if err != nil {
-			return err
-		}
 		errs := m.deleteMessages([]*sqs.Message{messages[0]})
 		if errs != nil {
 			return errs[0]
 		}
 		return nil
 	}
-	return interruptionEvent, err
-
+	interruptionEvent.PreDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
+		err := n.TaintSpotItn(interruptionEvent.NodeName, interruptionEvent.EventID)
+		if err != nil {
+			log.Log().Msgf("Unable to taint node with taint %s:%s: %v", node.SpotInterruptionTaint, interruptionEvent.EventID, err)
+		}
+		return nil
+	}
+	return interruptionEvent, nil
 }
 
 func (m SQSMonitor) receiveQueueMessages(qURL string) ([]*sqs.Message, error) {
