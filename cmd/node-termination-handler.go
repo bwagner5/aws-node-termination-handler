@@ -30,7 +30,6 @@ import (
 	"github.com/aws/aws-node-termination-handler/pkg/node"
 	"github.com/aws/aws-node-termination-handler/pkg/observability"
 	"github.com/aws/aws-node-termination-handler/pkg/webhook"
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -106,12 +105,12 @@ func main() {
 	if nthConfig.EnableSQSTerminationDraining {
 		sess := session.Must(session.NewSessionWithOptions(session.Options{
 			SharedConfigState: session.SharedConfigEnable,
-			Config: aws.Config{
-				Region: aws.String("us-east-1"),
-			},
 		}))
+		if sess.Config.Region == nil && nthConfig.Region == "" {
+			log.Fatal().Msg("Unable to find AWS Region, specify a --region or set the AWS_REGION env var")
+		}
 		sqsMonitor := interruptionevent.SQSMonitor{
-			QueueURL:         "https://sqs.us-east-1.amazonaws.com/896453262834/cth",
+			QueueURL:         nthConfig.QueueURL,
 			InterruptionChan: interruptionChan,
 			CancelChan:       cancelChan,
 			SQS:              sqs.New(sess),

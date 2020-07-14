@@ -65,6 +65,10 @@ const (
 	// https://github.com/prometheus/prometheus/wiki/Default-port-allocations
 	prometheusPortDefault   = 9092
 	prometheusPortConfigKey = "PROMETHEUS_SERVER_PORT"
+	region                  = ""
+	regionConfigKey         = "AWS_REGION"
+	queueURL                = ""
+	queueURLConfigKey       = "QUEUE_URL"
 )
 
 //Config arguments set via CLI, environment variables, or defaults
@@ -92,6 +96,8 @@ type Config struct {
 	UptimeFromFile                 string
 	EnablePrometheus               bool
 	PrometheusPort                 int
+	Region                         string
+	QueueURL                       string
 }
 
 //ParseCliArgs parses cli arguments and uses environment variables as fallback values
@@ -129,6 +135,9 @@ func ParseCliArgs() (config Config, err error) {
 	flag.StringVar(&config.UptimeFromFile, "uptime-from-file", getEnv(uptimeFromFileConfigKey, uptimeFromFileDefault), "If specified, read system uptime from the file path (useful for testing).")
 	flag.BoolVar(&config.EnablePrometheus, "enable-prometheus-server", getBoolEnv(enablePrometheusConfigKey, enablePrometheusDefault), "If true, a http server is used for exposing prometheus metrics in /metrics endpoint.")
 	flag.IntVar(&config.PrometheusPort, "prometheus-server-port", getIntEnv(prometheusPortConfigKey, prometheusPortDefault), "The port for running the prometheus http server.")
+	flag.StringVar(&config.Region, "region", getEnv(regionConfigKey, ""), "If specified, use the AWS region for AWS API calls.")
+	flag.StringVar(&config.QueueURL, "queue-url", getEnv(queueURLConfigKey, "https://sqs.us-east-1.amazonaws.com/896453262834/cth"), "Listens for messages on the specified SQS queue URL")
+	// TODO: ///////////////////////////////////////////////////////////////////////// ^^ delete this before pushing ^^ //////////
 
 	flag.Parse()
 
@@ -169,7 +178,9 @@ func ParseCliArgs() (config Config, err error) {
 			"\twebhook-proxy: %s,\n"+
 			"\tuptime-from-file: %s,\n"+
 			"\tenable-prometheus-server: %t,\n"+
-			"\tprometheus-server-port: %d,\n",
+			"\tprometheus-server-port: %d,\n"+
+			"\tregion: %s,\n"+
+			"\tqueue-url: %s,\n",
 		config.DryRun,
 		config.NodeName,
 		config.MetadataURL,
@@ -190,6 +201,8 @@ func ParseCliArgs() (config Config, err error) {
 		config.UptimeFromFile,
 		config.EnablePrometheus,
 		config.PrometheusPort,
+		config.Region,
+		config.QueueURL,
 	)
 
 	return config, err
