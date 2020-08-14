@@ -11,13 +11,14 @@
 // express or implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
-package interruptionevent
+package sqsevent
 
 import (
 	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/aws/aws-node-termination-handler/pkg/monitor"
 	"github.com/aws/aws-node-termination-handler/pkg/node"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
@@ -93,8 +94,8 @@ type SpotInterruptionDetail struct {
 
 // SQSMonitor is a struct definiiton that knows how to process events from Amazon EventBridge
 type SQSMonitor struct {
-	InterruptionChan chan<- InterruptionEvent
-	CancelChan       chan<- InterruptionEvent
+	InterruptionChan chan<- monitor.InterruptionEvent
+	CancelChan       chan<- monitor.InterruptionEvent
 	QueueURL         string
 	SQS              sqsiface.SQSAPI
 	ASG              autoscalingiface.AutoScalingAPI
@@ -120,7 +121,7 @@ func (m SQSMonitor) Kind() string {
 }
 
 // checkForSpotInterruptionNotice checks sqs for new messages and returns interruption events
-func (m SQSMonitor) checkForSQSMessage() (*InterruptionEvent, error) {
+func (m SQSMonitor) checkForSQSMessage() (*monitor.InterruptionEvent, error) {
 
 	log.Log().Msg("Checking for queue messages")
 	messages, err := m.receiveQueueMessages(m.QueueURL)
@@ -137,7 +138,7 @@ func (m SQSMonitor) checkForSQSMessage() (*InterruptionEvent, error) {
 		return nil, err
 	}
 
-	interruptionEvent := InterruptionEvent{}
+	interruptionEvent := monitor.InterruptionEvent{}
 
 	switch event.Source {
 	case "aws.autoscaling":
@@ -157,19 +158,19 @@ func (m SQSMonitor) checkForSQSMessage() (*InterruptionEvent, error) {
 	return &interruptionEvent, err
 }
 
-func (m SQSMonitor) asgTerminationToInterruptionEvent(event EventBridgeEvent, messages []*sqs.Message) (InterruptionEvent, error) {
+func (m SQSMonitor) asgTerminationToInterruptionEvent(event EventBridgeEvent, messages []*sqs.Message) (monitor.InterruptionEvent, error) {
 	lifecycleDetail := &LifecycleDetail{}
 	err := json.Unmarshal(event.Detail, lifecycleDetail)
 	if err != nil {
-		return InterruptionEvent{}, err
+		return monitor.InterruptionEvent{}, err
 	}
 
 	nodeName, err := m.retrieveNodeName(lifecycleDetail.EC2InstanceID)
 	if err != nil {
-		return InterruptionEvent{}, err
+		return monitor.InterruptionEvent{}, err
 	}
 
-	interruptionEvent := InterruptionEvent{
+	interruptionEvent := monitor.InterruptionEvent{
 		EventID:     fmt.Sprintf("asg-lifecycle-term-%x", event.ID),
 		Kind:        SQSTerminateKind,
 		StartTime:   event.getTime(),
@@ -177,7 +178,7 @@ func (m SQSMonitor) asgTerminationToInterruptionEvent(event EventBridgeEvent, me
 		Description: fmt.Sprintf("ASG Lifecycle Termination event received. Instance will be interrupted at %s \n", event.getTime()),
 	}
 
-	interruptionEvent.PostDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
+	interruptionEvent.PostDrainTask = func(interruptionEvent monitor.InterruptionEvent, n node.Node) error {
 		_, err = m.ASG.CompleteLifecycleAction(&autoscaling.CompleteLifecycleActionInput{
 			AutoScalingGroupName:  &lifecycleDetail.AutoScalingGroupName,
 			LifecycleActionResult: aws.String("CONTINUE"),
@@ -194,7 +195,7 @@ func (m SQSMonitor) asgTerminationToInterruptionEvent(event EventBridgeEvent, me
 		}
 		return nil
 	}
-	interruptionEvent.PreDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
+	interruptionEvent.PreDrainTask = func(interruptionEvent monitor.InterruptionEvent, n node.Node) error {
 		err := n.TaintSpotItn(interruptionEvent.NodeName, interruptionEvent.EventID)
 		if err != nil {
 			log.Log().Msgf("Unable to taint node with taint %s:%s: %v", node.ASGLifecycleTerminationTaint, interruptionEvent.EventID, err)
@@ -205,33 +206,33 @@ func (m SQSMonitor) asgTerminationToInterruptionEvent(event EventBridgeEvent, me
 	return interruptionEvent, nil
 }
 
-func (m SQSMonitor) spotITNTerminationToInterruptionEvent(event EventBridgeEvent, messages []*sqs.Message) (InterruptionEvent, error) {
+func (m SQSMonitor) spotITNTerminationToInterruptionEvent(event EventBridgeEvent, messages []*sqs.Message) (monitor.InterruptionEvent, error) {
 	spotInterruptionDetail := &SpotInterruptionDetail{}
 	err := json.Unmarshal(event.Detail, spotInterruptionDetail)
 	if err != nil {
-		return InterruptionEvent{}, err
+		return monitor.InterruptionEvent{}, err
 	}
 
 	nodeName, err := m.retrieveNodeName(spotInterruptionDetail.InstanceID)
 	if err != nil {
-		return InterruptionEvent{}, err
+		return monitor.InterruptionEvent{}, err
 	}
 
-	interruptionEvent := InterruptionEvent{
+	interruptionEvent := monitor.InterruptionEvent{
 		EventID:     fmt.Sprintf("spot-itn-event-%x", event.ID),
 		Kind:        SQSTerminateKind,
 		StartTime:   event.getTime(),
 		NodeName:    nodeName,
 		Description: fmt.Sprintf("Spot Interruption event received. Instance will be interrupted at %s \n", event.getTime()),
 	}
-	interruptionEvent.PostDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
+	interruptionEvent.PostDrainTask = func(interruptionEvent monitor.InterruptionEvent, n node.Node) error {
 		errs := m.deleteMessages([]*sqs.Message{messages[0]})
 		if errs != nil {
 			return errs[0]
 		}
 		return nil
 	}
-	interruptionEvent.PreDrainTask = func(interruptionEvent InterruptionEvent, n node.Node) error {
+	interruptionEvent.PreDrainTask = func(interruptionEvent monitor.InterruptionEvent, n node.Node) error {
 		err := n.TaintSpotItn(interruptionEvent.NodeName, interruptionEvent.EventID)
 		if err != nil {
 			log.Log().Msgf("Unable to taint node with taint %s:%s: %v", node.SpotInterruptionTaint, interruptionEvent.EventID, err)

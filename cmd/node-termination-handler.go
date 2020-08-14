@@ -22,11 +22,11 @@ import (
 
 	"github.com/aws/aws-node-termination-handler/pkg/config"
 	"github.com/aws/aws-node-termination-handler/pkg/ec2metadata"
-	"github.com/aws/aws-node-termination-handler/pkg/interruptionevent"
 	"github.com/aws/aws-node-termination-handler/pkg/interruptioneventstore"
 	"github.com/aws/aws-node-termination-handler/pkg/monitor"
 	"github.com/aws/aws-node-termination-handler/pkg/monitor/scheduledevent"
 	"github.com/aws/aws-node-termination-handler/pkg/monitor/spotitn"
+	"github.com/aws/aws-node-termination-handler/pkg/monitor/sqsevent"
 	"github.com/aws/aws-node-termination-handler/pkg/node"
 	"github.com/aws/aws-node-termination-handler/pkg/observability"
 	"github.com/aws/aws-node-termination-handler/pkg/webhook"
@@ -109,7 +109,7 @@ func main() {
 		if sess.Config.Region == nil && nthConfig.Region == "" {
 			log.Fatal().Msg("Unable to find AWS Region, specify a --region or set the AWS_REGION env var")
 		}
-		sqsMonitor := interruptionevent.SQSMonitor{
+		sqsMonitor := sqsevent.SQSMonitor{
 			QueueURL:         nthConfig.QueueURL,
 			InterruptionChan: interruptionChan,
 			CancelChan:       cancelChan,
