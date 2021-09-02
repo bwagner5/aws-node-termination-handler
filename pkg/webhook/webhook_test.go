@@ -24,6 +24,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/Masterminds/sprig/v3"
 	"github.com/aws/aws-node-termination-handler/pkg/config"
 	"github.com/aws/aws-node-termination-handler/pkg/ec2metadata"
 	"github.com/aws/aws-node-termination-handler/pkg/monitor"
@@ -35,7 +36,7 @@ import (
 const (
 	testDateFormat      = "02 Jan 2006 15:04:05 GMT"
 	testWebhookHeaders  = `{"Content-type":"application/json"}`
-	testWebhookTemplate = `{"text":"[NTH][Instance Interruption] EventID: {{ .EventID }} - Kind: {{ .Kind }} - Description: {{ .Description }} - Start Time: {{ .StartTime }}"}`
+	testWebhookTemplate = `{"text":"[NTH][Instance Interruption] EventID: {{ .EventID | trimPrefix "event" }} - Kind: {{ .Kind | lower }} - Node: {{ .NodeName }} - Description: {{ .Description }} - Start Time: {{ .StartTime }}"}`
 )
 
 func parseScheduledEventTime(inputTime string) time.Time {
@@ -43,15 +44,16 @@ func parseScheduledEventTime(inputTime string) time.Time {
 	return scheduledTime
 }
 
-func getExpectedMessage(event *monitor.InterruptionEvent) string {
-	webhookTemplate, err := template.New("").Parse(testWebhookTemplate)
+func getExpectedMessage(t *testing.T, event *monitor.InterruptionEvent) string {
+	webhookTemplate, err := template.New("").Funcs(sprig.TxtFuncMap()).Parse(testWebhookTemplate)
 	if err != nil {
-		log.Log().Err(err).Msg("Webhook Error: Template parsing failed")
+		log.Err(err).Msg("Webhook Error: Template parsing failed")
 		return ""
 	}
 
 	var byteBuffer bytes.Buffer
-	webhookTemplate.Execute(&byteBuffer, event)
+	err = webhookTemplate.Execute(&byteBuffer, event)
+	h.Ok(t, err)
 
 	m := map[string]interface{}{}
 	if err := json.Unmarshal(byteBuffer.Bytes(), &m); err != nil {
@@ -71,6 +73,7 @@ func TestPostSuccess(t *testing.T) {
 		State:       "active",
 		StartTime:   parseScheduledEventTime("21 Jan 2019 09:00:43 GMT"),
 		EndTime:     parseScheduledEventTime("21 Jan 2019 09:17:23 GMT"),
+		NodeName:    "e2e-test-abcd",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
@@ -93,9 +96,10 @@ func TestPostSuccess(t *testing.T) {
 		if err := json.Unmarshal([]byte(requestBody), &requestMap); err != nil {
 			t.Error("Unable to parse request body to json.")
 		}
-		h.Equals(t, getExpectedMessage(event), requestMap["text"])
+		h.Equals(t, getExpectedMessage(t, event), requestMap["text"])
 
-		rw.Write([]byte(`OK`))
+		_, err = rw.Write([]byte(`OK`))
+		h.Ok(t, err)
 	}))
 	defer server.Close()
 

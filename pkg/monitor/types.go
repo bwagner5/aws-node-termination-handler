@@ -14,31 +14,42 @@
 package monitor
 
 import (
+	"strings"
 	"time"
 
 	"github.com/aws/aws-node-termination-handler/pkg/node"
 )
 
+// DrainTask defines a task to be run when draining a node
 type DrainTask func(InterruptionEvent, node.Node) error
 
 // InterruptionEvent gives more context of the interruption event
 type InterruptionEvent struct {
-	EventID       string
-	Kind          string
-	Description   string
-	State         string
-	NodeName      string
-	InstanceID    string
-	StartTime     time.Time
-	EndTime       time.Time
-	Drained       bool
-	PreDrainTask  DrainTask `json:"-"`
-	PostDrainTask DrainTask `json:"-"`
+	EventID              string
+	Kind                 string
+	Description          string
+	State                string
+	AutoScalingGroupName string
+	NodeName             string
+	NodeLabels           map[string]string
+	Pods                 []string
+	InstanceID           string
+	StartTime            time.Time
+	EndTime              time.Time
+	NodeProcessed        bool
+	InProgress           bool
+	PreDrainTask         DrainTask `json:"-"`
+	PostDrainTask        DrainTask `json:"-"`
 }
 
 // TimeUntilEvent returns the duration until the event start time
 func (e *InterruptionEvent) TimeUntilEvent() time.Duration {
-	return e.StartTime.Sub(time.Now())
+	return time.Until(e.StartTime)
+}
+
+// IsRebalanceRecommendation returns true if the interruption event is a rebalance recommendation
+func (e *InterruptionEvent) IsRebalanceRecommendation() bool {
+	return strings.Contains(e.EventID, "rebalance-recommendation")
 }
 
 // Monitor is an interface which can be implemented for various sources of interruption events

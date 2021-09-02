@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/rs/zerolog/log"
 )
 
@@ -47,15 +46,21 @@ const (
 	webhookHeadersDefault                   = `{"Content-type":"application/json"}`
 	webhookTemplateConfigKey                = "WEBHOOK_TEMPLATE"
 	webhookTemplateFileConfigKey            = "WEBHOOK_TEMPLATE_FILE"
-	webhookTemplateDefault                  = `{"text":"[NTH][Instance Interruption] EventID: {{ .EventID }} - Kind: {{ .Kind }} - Instance: {{ .InstanceID }} - Description: {{ .Description }} - Start Time: {{ .StartTime }}"}`
+	webhookTemplateDefault                  = `{"text":"[NTH][Instance Interruption] EventID: {{ .EventID }} - Kind: {{ .Kind }} - Instance: {{ .InstanceID }} - Node: {{ .NodeName }} - Description: {{ .Description }} - Start Time: {{ .StartTime }}"}`
 	enableScheduledEventDrainingConfigKey   = "ENABLE_SCHEDULED_EVENT_DRAINING"
 	enableScheduledEventDrainingDefault     = false
 	enableSpotInterruptionDrainingConfigKey = "ENABLE_SPOT_INTERRUPTION_DRAINING"
 	enableSpotInterruptionDrainingDefault   = true
 	enableSQSTerminationDrainingConfigKey   = "ENABLE_SQS_TERMINATION_DRAINING"
 	enableSQSTerminationDrainingDefault     = false
+	enableRebalanceMonitoringConfigKey      = "ENABLE_REBALANCE_MONITORING"
+	enableRebalanceMonitoringDefault        = false
+	enableRebalanceDrainingConfigKey        = "ENABLE_REBALANCE_DRAINING"
+	enableRebalanceDrainingDefault          = false
 	checkASGTagBeforeDrainingConfigKey      = "CHECK_ASG_TAG_BEFORE_DRAINING"
 	checkASGTagBeforeDrainingDefault        = true
+	managedAsgTagConfigKey                  = "MANAGED_ASG_TAG"
+	managedAsgTagDefault                    = "aws-node-termination-handler/managed"
 	metadataTriesConfigKey                  = "METADATA_TRIES"
 	metadataTriesDefault                    = 3
 	cordonOnly                              = "CORDON_ONLY"
@@ -66,51 +71,69 @@ const (
 	logLevelDefault                         = "INFO"
 	uptimeFromFileConfigKey                 = "UPTIME_FROM_FILE"
 	uptimeFromFileDefault                   = ""
+	workersConfigKey                        = "WORKERS"
+	workersDefault                          = 10
 	// prometheus
 	enablePrometheusDefault   = false
 	enablePrometheusConfigKey = "ENABLE_PROMETHEUS_SERVER"
 	// https://github.com/prometheus/prometheus/wiki/Default-port-allocations
 	prometheusPortDefault   = 9092
 	prometheusPortConfigKey = "PROMETHEUS_SERVER_PORT"
-	region                  = ""
-	awsRegionConfigKey      = "AWS_REGION"
-	awsEndpointConfigKey    = "AWS_ENDPOINT"
-	queueURL                = ""
-	queueURLConfigKey       = "QUEUE_URL"
+	// probes
+	enableProbesDefault                       = false
+	enableProbesConfigKey                     = "ENABLE_PROBES_SERVER"
+	probesPortDefault                         = 8080
+	probesPortConfigKey                       = "PROBES_SERVER_PORT"
+	probesEndpointDefault                     = "/healthz"
+	probesEndpointConfigKey                   = "PROBES_SERVER_ENDPOINT"
+	emitKubernetesEventsConfigKey             = "EMIT_KUBERNETES_EVENTS"
+	emitKubernetesEventsDefault               = false
+	kubernetesEventsExtraAnnotationsConfigKey = "KUBERNETES_EVENTS_EXTRA_ANNOTATIONS"
+	awsRegionConfigKey                        = "AWS_REGION"
+	awsEndpointConfigKey                      = "AWS_ENDPOINT"
+	queueURLConfigKey                         = "QUEUE_URL"
 )
 
 //Config arguments set via CLI, environment variables, or defaults
 type Config struct {
-	DryRun                         bool
-	NodeName                       string
-	MetadataURL                    string
-	IgnoreDaemonSets               bool
-	DeleteLocalData                bool
-	KubernetesServiceHost          string
-	KubernetesServicePort          string
-	PodTerminationGracePeriod      int
-	NodeTerminationGracePeriod     int
-	WebhookURL                     string
-	WebhookHeaders                 string
-	WebhookTemplate                string
-	WebhookTemplateFile            string
-	WebhookProxy                   string
-	EnableScheduledEventDraining   bool
-	EnableSpotInterruptionDraining bool
-	EnableSQSTerminationDraining   bool
-	CheckASGTagBeforeDraining      bool
-	MetadataTries                  int
-	CordonOnly                     bool
-	TaintNode                      bool
-	JsonLogging                    bool
-	LogLevel                       string
-	UptimeFromFile                 string
-	EnablePrometheus               bool
-	PrometheusPort                 int
-	AWSRegion                      string
-	AWSEndpoint                    string
-	QueueURL                       string
-	AWSSession                     *session.Session
+	DryRun                           bool
+	NodeName                         string
+	MetadataURL                      string
+	IgnoreDaemonSets                 bool
+	DeleteLocalData                  bool
+	KubernetesServiceHost            string
+	KubernetesServicePort            string
+	PodTerminationGracePeriod        int
+	NodeTerminationGracePeriod       int
+	WebhookURL                       string
+	WebhookHeaders                   string
+	WebhookTemplate                  string
+	WebhookTemplateFile              string
+	WebhookProxy                     string
+	EnableScheduledEventDraining     bool
+	EnableSpotInterruptionDraining   bool
+	EnableSQSTerminationDraining     bool
+	EnableRebalanceMonitoring        bool
+	EnableRebalanceDraining          bool
+	CheckASGTagBeforeDraining        bool
+	ManagedAsgTag                    string
+	MetadataTries                    int
+	CordonOnly                       bool
+	TaintNode                        bool
+	JsonLogging                      bool
+	LogLevel                         string
+	UptimeFromFile                   string
+	EnablePrometheus                 bool
+	PrometheusPort                   int
+	EnableProbes                     bool
+	ProbesPort                       int
+	ProbesEndpoint                   string
+	EmitKubernetesEvents             bool
+	KubernetesEventsExtraAnnotations string
+	AWSRegion                        string
+	AWSEndpoint                      string
+	QueueURL                         string
+	Workers                          int
 }
 
 //ParseCliArgs parses cli arguments and uses environment variables as fallback values
@@ -142,7 +165,10 @@ func ParseCliArgs() (config Config, err error) {
 	flag.BoolVar(&config.EnableScheduledEventDraining, "enable-scheduled-event-draining", getBoolEnv(enableScheduledEventDrainingConfigKey, enableScheduledEventDrainingDefault), "[EXPERIMENTAL] If true, drain nodes before the maintenance window starts for an EC2 instance scheduled event")
 	flag.BoolVar(&config.EnableSpotInterruptionDraining, "enable-spot-interruption-draining", getBoolEnv(enableSpotInterruptionDrainingConfigKey, enableSpotInterruptionDrainingDefault), "If true, drain nodes when the spot interruption termination notice is received")
 	flag.BoolVar(&config.EnableSQSTerminationDraining, "enable-sqs-termination-draining", getBoolEnv(enableSQSTerminationDrainingConfigKey, enableSQSTerminationDrainingDefault), "If true, drain nodes when an SQS termination event is received")
+	flag.BoolVar(&config.EnableRebalanceMonitoring, "enable-rebalance-monitoring", getBoolEnv(enableRebalanceMonitoringConfigKey, enableRebalanceMonitoringDefault), "If true, cordon nodes when the rebalance recommendation notice is received. If you'd like to drain the node in addition to cordoning, then also set \"enableRebalanceDraining\".")
+	flag.BoolVar(&config.EnableRebalanceDraining, "enable-rebalance-draining", getBoolEnv(enableRebalanceDrainingConfigKey, enableRebalanceDrainingDefault), "If true, drain nodes when the rebalance recommendation notice is received")
 	flag.BoolVar(&config.CheckASGTagBeforeDraining, "check-asg-tag-before-draining", getBoolEnv(checkASGTagBeforeDrainingConfigKey, checkASGTagBeforeDrainingDefault), "If true, check that the instance is tagged with \"aws-node-termination-handler/managed\" as the key before draining the node")
+	flag.StringVar(&config.ManagedAsgTag, "managed-asg-tag", getEnv(managedAsgTagConfigKey, managedAsgTagDefault), "Sets the tag to check for on instances that is propogated from the ASG before taking action, default to aws-node-termination-handler/managed")
 	flag.IntVar(&config.MetadataTries, "metadata-tries", getIntEnv(metadataTriesConfigKey, metadataTriesDefault), "The number of times to try requesting metadata. If you would like 2 retries, set metadata-tries to 3.")
 	flag.BoolVar(&config.CordonOnly, "cordon-only", getBoolEnv(cordonOnly, false), "If true, nodes will be cordoned but not drained when an interruption event occurs.")
 	flag.BoolVar(&config.TaintNode, "taint-node", getBoolEnv(taintNode, false), "If true, nodes will be tainted when an interruption event occurs.")
@@ -151,34 +177,22 @@ func ParseCliArgs() (config Config, err error) {
 	flag.StringVar(&config.UptimeFromFile, "uptime-from-file", getEnv(uptimeFromFileConfigKey, uptimeFromFileDefault), "If specified, read system uptime from the file path (useful for testing).")
 	flag.BoolVar(&config.EnablePrometheus, "enable-prometheus-server", getBoolEnv(enablePrometheusConfigKey, enablePrometheusDefault), "If true, a http server is used for exposing prometheus metrics in /metrics endpoint.")
 	flag.IntVar(&config.PrometheusPort, "prometheus-server-port", getIntEnv(prometheusPortConfigKey, prometheusPortDefault), "The port for running the prometheus http server.")
+	flag.BoolVar(&config.EnableProbes, "enable-probes-server", getBoolEnv(enableProbesConfigKey, enableProbesDefault), "If true, a http server is used for exposing probes in /healthz endpoint.")
+	flag.IntVar(&config.ProbesPort, "probes-server-port", getIntEnv(probesPortConfigKey, probesPortDefault), "The port for running the probes http server.")
+	flag.StringVar(&config.ProbesEndpoint, "probes-server-endpoint", getEnv(probesEndpointConfigKey, probesEndpointDefault), "If specified, use this endpoint to make liveness probe")
+	flag.BoolVar(&config.EmitKubernetesEvents, "emit-kubernetes-events", getBoolEnv(emitKubernetesEventsConfigKey, emitKubernetesEventsDefault), "If true, Kubernetes events will be emitted when interruption events are received and when actions are taken on Kubernetes nodes")
+	flag.StringVar(&config.KubernetesEventsExtraAnnotations, "kubernetes-events-extra-annotations", getEnv(kubernetesEventsExtraAnnotationsConfigKey, ""), "A comma-separated list of key=value extra annotations to attach to all emitted Kubernetes events. Example: --kubernetes-events-extra-annotations first=annotation,sample.annotation/number=two")
 	flag.StringVar(&config.AWSRegion, "aws-region", getEnv(awsRegionConfigKey, ""), "If specified, use the AWS region for AWS API calls")
 	flag.StringVar(&config.AWSEndpoint, "aws-endpoint", getEnv(awsEndpointConfigKey, ""), "[testing] If specified, use the AWS endpoint to make API calls")
 	flag.StringVar(&config.QueueURL, "queue-url", getEnv(queueURLConfigKey, ""), "Listens for messages on the specified SQS queue URL")
+	flag.IntVar(&config.Workers, "workers", getIntEnv(workersConfigKey, workersDefault), "The amount of parallel event processors.")
 
 	flag.Parse()
 
-	if config.EnableSQSTerminationDraining {
-		sess := session.Must(session.NewSessionWithOptions(session.Options{
-			SharedConfigState: session.SharedConfigEnable,
-		}))
-		if config.AWSRegion != "" {
-			sess.Config.Region = &config.AWSRegion
-		} else if *sess.Config.Region == "" && config.QueueURL != "" {
-			config.AWSRegion = strings.Split(config.QueueURL, ".")[1]
-			sess.Config.Region = &config.AWSRegion
-		} else {
-			config.AWSRegion = *sess.Config.Region
-		}
-		config.AWSSession = sess
-		if config.AWSEndpoint != "" {
-			config.AWSSession.Config.Endpoint = &config.AWSEndpoint
-		}
-	}
-
 	if isConfigProvided("pod-termination-grace-period", podTerminationGracePeriodConfigKey) && isConfigProvided("grace-period", gracePeriodConfigKey) {
-		log.Log().Msg("Deprecated argument \"grace-period\" and the replacement argument \"pod-termination-grace-period\" was provided. Using the newer argument \"pod-termination-grace-period\"")
+		log.Warn().Msg("Deprecated argument \"grace-period\" and the replacement argument \"pod-termination-grace-period\" was provided. Using the newer argument \"pod-termination-grace-period\"")
 	} else if isConfigProvided("grace-period", gracePeriodConfigKey) {
-		log.Log().Msg("Deprecated argument \"grace-period\" was provided. This argument will eventually be removed. Please switch to \"pod-termination-grace-period\" instead.")
+		log.Warn().Msg("Deprecated argument \"grace-period\" was provided. This argument will eventually be removed. Please switch to \"pod-termination-grace-period\" instead.")
 		config.PodTerminationGracePeriod = gracePeriod
 	}
 
@@ -214,7 +228,7 @@ func (c Config) Print() {
 func (c Config) PrintJsonConfigArgs() {
 	// manually setting fields instead of using log.Log().Interface() to use snake_case instead of PascalCase
 	// intentionally did not log webhook configuration as there may be secrets
-	log.Log().
+	log.Info().
 		Bool("dry_run", c.DryRun).
 		Str("node_name", c.NodeName).
 		Str("metadata_url", c.MetadataURL).
@@ -227,6 +241,8 @@ func (c Config) PrintJsonConfigArgs() {
 		Bool("enable_scheduled_event_draining", c.EnableScheduledEventDraining).
 		Bool("enable_spot_interruption_draining", c.EnableSpotInterruptionDraining).
 		Bool("enable_sqs_termination_draining", c.EnableSQSTerminationDraining).
+		Bool("enable_rebalance_monitoring", c.EnableRebalanceMonitoring).
+		Bool("enable_rebalance_draining", c.EnableRebalanceDraining).
 		Int("metadata_tries", c.MetadataTries).
 		Bool("cordon_only", c.CordonOnly).
 		Bool("taint_node", c.TaintNode).
@@ -236,10 +252,13 @@ func (c Config) PrintJsonConfigArgs() {
 		Str("uptime_from_file", c.UptimeFromFile).
 		Bool("enable_prometheus_server", c.EnablePrometheus).
 		Int("prometheus_server_port", c.PrometheusPort).
+		Bool("emit_kubernetes_events", c.EmitKubernetesEvents).
+		Str("kubernetes_events_extra_annotations", c.KubernetesEventsExtraAnnotations).
 		Str("aws_region", c.AWSRegion).
 		Str("aws_endpoint", c.AWSEndpoint).
 		Str("queue_url", c.QueueURL).
 		Bool("check_asg_tag_before_draining", c.CheckASGTagBeforeDraining).
+		Str("ManagedAsgTag", c.ManagedAsgTag).
 		Msg("aws-node-termination-handler arguments")
 }
 
@@ -250,7 +269,7 @@ func (c Config) PrintHumanConfigArgs() {
 		webhookURLDisplay = "<provided-not-displayed>"
 	}
 	// intentionally did not log webhook configuration as there may be secrets
-	log.Log().Msgf(
+	log.Info().Msgf(
 		"aws-node-termination-handler arguments: \n"+
 			"\tdry-run: %t,\n"+
 			"\tnode-name: %s,\n"+
@@ -264,6 +283,8 @@ func (c Config) PrintHumanConfigArgs() {
 			"\tenable-scheduled-event-draining: %t,\n"+
 			"\tenable-spot-interruption-draining: %t,\n"+
 			"\tenable-sqs-termination-draining: %t,\n"+
+			"\tenable-rebalance-monitoring: %t,\n"+
+			"\tenable-rebalance-draining: %t,\n"+
 			"\tmetadata-tries: %d,\n"+
 			"\tcordon-only: %t,\n"+
 			"\ttaint-node: %t,\n"+
@@ -276,9 +297,12 @@ func (c Config) PrintHumanConfigArgs() {
 			"\tuptime-from-file: %s,\n"+
 			"\tenable-prometheus-server: %t,\n"+
 			"\tprometheus-server-port: %d,\n"+
+			"\temit-kubernetes-events: %t,\n"+
+			"\tkubernetes-events-extra-annotations: %s,\n"+
 			"\taws-region: %s,\n"+
 			"\tqueue-url: %s,\n"+
 			"\tcheck-asg-tag-before-draining: %t,\n"+
+			"\tmanaged-asg-tag: %s,\n"+
 			"\taws-endpoint: %s,\n",
 		c.DryRun,
 		c.NodeName,
@@ -292,6 +316,8 @@ func (c Config) PrintHumanConfigArgs() {
 		c.EnableScheduledEventDraining,
 		c.EnableSpotInterruptionDraining,
 		c.EnableSQSTerminationDraining,
+		c.EnableRebalanceMonitoring,
+		c.EnableRebalanceDraining,
 		c.MetadataTries,
 		c.CordonOnly,
 		c.TaintNode,
@@ -304,9 +330,12 @@ func (c Config) PrintHumanConfigArgs() {
 		c.UptimeFromFile,
 		c.EnablePrometheus,
 		c.PrometheusPort,
+		c.EmitKubernetesEvents,
+		c.KubernetesEventsExtraAnnotations,
 		c.AWSRegion,
 		c.QueueURL,
 		c.CheckASGTagBeforeDraining,
+		c.ManagedAsgTag,
 		c.AWSEndpoint,
 	)
 }

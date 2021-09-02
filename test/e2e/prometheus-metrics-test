@@ -20,9 +20,7 @@ common_helm_args=()
 [[ "${TEST_WINDOWS-}" == "true" ]] && common_helm_args+=(--set targetNodeOs="windows")
 [[ -n "${NTH_WORKER_LABEL-}" ]] && common_helm_args+=(--set nodeSelector."$NTH_WORKER_LABEL")
 
-helm repo add stable https://kubernetes-charts.storage.googleapis.com
-helm repo update
-retry 5 helm install prometheus-operator stable/prometheus-operator --set prometheusOperator.admissionWebhooks.enabled="false"
+retry 5 helm install prometheus-operator "$SCRIPTPATH/../../config/helm/prometheus-operator/" --set prometheusOperator.admissionWebhooks.enabled="false"
 
 anth_helm_args=(
   upgrade
@@ -145,45 +143,27 @@ PORT_FORWARD_PID=$!
 trap 'kill ${PORT_FORWARD_PID}' EXIT SIGINT SIGTERM ERR
 echo "✅ Port-forwarded pod $POD_NAME"
 
-sleep 1
+sleep 10
 
-METRICS_RESPONSE=$(curl -L localhost:7000/metrics)
-echo "✅ Fetched /metrics."
+for i in `seq 1 $TAINT_CHECK_CYCLES`; do
+    METRICS_RESPONSE=$(curl -L localhost:7000/metrics)
+    echo "✅ Fetched /metrics."
+    failed=""
+    for METRIC in cordon-and-drain pre-drain runtime_go_gc runtime_go_goroutines runtime_go_mem; do
+        if [[ $METRICS_RESPONSE == *"$METRIC"* ]]; then
+            echo "✅ Metric $METRIC!"
+        else
+            echo "⚠️  Metric $METRIC"
+            failed=$METRIC
+            break
+        fi
+    done
+    if [ -z $failed ]; then
+        exit 0
+    fi
+    echo "Metrics Loop $i/$TAINT_CHECK_CYCLES, sleeping for $TAINT_CHECK_SLEEP seconds"
+    sleep $TAINT_CHECK_SLEEP
+done
 
-if [[ $METRICS_RESPONSE == *"cordon-and-drain"* ]]; then
-    echo "✅ Metric cordon-and-drain!"
-else
-    echo "❌ Failed checking metric for cordon-and-drain"
-    EXIT_STATUS=3
-fi
-
-if [[ $METRICS_RESPONSE == *"pre-drain"* ]]; then
-    echo "✅ Metric pre-drain!"
-else
-    echo "❌ Failed checking metric for pre-drain"
-    EXIT_STATUS=3
-fi
-
-if [[ $METRICS_RESPONSE == *"runtime_go_gc"* ]]; then
-    echo "✅ Metric runtime_go_gc!"
-else
-    echo "❌ Failed checking runtime_go_gc metric"
-    EXIT_STATUS=3
-fi
-
-if [[ $METRICS_RESPONSE == *"runtime_go_goroutines"* ]]; then
-    echo "✅ Metric runtime_go_goroutines!"
-else
-    echo "❌ Failed checking runtime_go_goroutines metric"
-    EXIT_STATUS=3
-fi
-
-if [[ $METRICS_RESPONSE == *"runtime_go_mem"* ]]; then
-    echo "✅ Metric runtime_go_mem!"
-else
-    echo "❌ Failed checking runtime_go_mem metric"
-    EXIT_STATUS=3
-fi
-
-
-exit $EXIT_STATUS
+echo "❌ Failed checking metric for $METRIC"
+exit 3

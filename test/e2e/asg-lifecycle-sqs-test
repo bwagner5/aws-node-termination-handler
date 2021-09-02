@@ -40,22 +40,6 @@ set -x
 helm "${localstack_helm_args[@]}"
 set +x
 
-aemm_helm_args=(
-  upgrade
-  --install
-  "$CLUSTER_NAME-aemm"
-  "$AEMM_DL_URL"
-  --namespace default
-  --set servicePort="$IMDS_PORT"
-  --wait
-)
-[[ ${#common_helm_args[@]} -gt 0 ]] &&
-    aemm_helm_args+=("${common_helm_args[@]}")
-
-set -x
-retry 5 helm "${aemm_helm_args[@]}"
-set +x
-
 sleep 10
 
 RUN_INSTANCE_CMD="awslocal ec2 run-instances --private-ip-address ${WORKER_IP} --region ${AWS_REGION}"
@@ -63,13 +47,13 @@ localstack_pod=$(kubectl get pods --selector app=localstack --field-selector="st
                                   -o go-template --template '{{range .items}}{{.metadata.name}} {{.metadata.creationTimestamp}}{{"\n"}}{{end}}' \
                                   | awk '$2 >= "'"${START_TIME//+0000/Z}"'" { print $1 }')
 echo "🥑 Using localstack pod ${localstack_pod}"
-run_instances_resp=$(kubectl exec -it "${localstack_pod}" -- bash -c "${RUN_INSTANCE_CMD}")
+run_instances_resp=$(kubectl exec -i "${localstack_pod}" -- bash -c "${RUN_INSTANCE_CMD}")
 private_dns_name=$(echo "${run_instances_resp}" | jq -r '.Instances[] .PrivateDnsName')
 instance_id=$(echo "${run_instances_resp}" | jq -r '.Instances[] .InstanceId')
 echo "🥑 Started mock EC2 instance ($instance_id) w/ private DNS name: ${private_dns_name}"
 set -x
 CREATE_SQS_CMD="awslocal sqs create-queue --queue-name "${CLUSTER_NAME}-queue" --attributes MessageRetentionPeriod=300 --region ${AWS_REGION}"
-queue_url=$(kubectl exec -it "${localstack_pod}" -- bash -c "${CREATE_SQS_CMD}" | jq -r .QueueUrl)
+queue_url=$(kubectl exec -i "${localstack_pod}" -- bash -c "${CREATE_SQS_CMD}" | jq -r .QueueUrl)
 
 echo "🥑 Created SQS Queue ${queue_url}"
 
@@ -79,7 +63,6 @@ anth_helm_args=(
   "$CLUSTER_NAME-acth"
   "$SCRIPTPATH/../../config/helm/aws-node-termination-handler/"
   --namespace kube-system
-  --set instanceMetadataURL="${INSTANCE_METADATA_URL:-"http://$AEMM_URL:$IMDS_PORT"}"
   --set image.repository="$NODE_TERMINATION_HANDLER_DOCKER_REPO"
   --set image.tag="$NODE_TERMINATION_HANDLER_DOCKER_TAG"
   --set awsAccessKeyID=foo
@@ -165,7 +148,7 @@ EOF
 
 ASG_TERMINATE_EVENT_ONE_LINE=$(echo "${ASG_TERMINATE_EVENT}" | tr -d '\n' |sed 's/\"/\\"/g')
 SEND_SQS_CMD="awslocal sqs send-message --queue-url ${queue_url} --message-body \"${ASG_TERMINATE_EVENT_ONE_LINE}\" --region ${AWS_REGION}"
-kubectl exec -it "${localstack_pod}" -- bash -c "$SEND_SQS_CMD"
+kubectl exec -i "${localstack_pod}" -- bash -c "$SEND_SQS_CMD"
 echo "✅ Sent Spot Interruption Event to SQS queue: ${queue_url}"
 
 cordoned=0

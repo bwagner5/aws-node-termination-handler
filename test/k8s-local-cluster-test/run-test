@@ -18,7 +18,7 @@ WEBHOOK_DOCKER_IMG=""
 OVERRIDE_PATH=0
 K8S_VERSION="1.16"
 AEMM_URL="amazon-ec2-metadata-mock-service.default.svc.cluster.local"
-AEMM_VERSION="1.6.0"
+AEMM_VERSION="1.8.1"
 AEMM_DL_URL="https://github.com/aws/amazon-ec2-metadata-mock/releases/download/v$AEMM_VERSION/amazon-ec2-metadata-mock-$AEMM_VERSION.tgz"
 WEBHOOK_URL=${WEBHOOK_URL:="http://webhook-test-proxy.default.svc.cluster.local"}
 
@@ -88,8 +88,10 @@ function reset_cluster {
         kubectl taint node "$node" aws-node-termination-handler/scheduled-maintenance- || true
         kubectl taint node "$node" aws-node-termination-handler/spot-itn- || true
         kubectl taint node "$node" aws-node-termination-handler/asg-lifecycle-termination- || true
+        kubectl taint node "$node" aws-node-termination-handler/rebalance-recommendation- || true
     done
     remove_labels || :
+    kubectl delete events --all
     sleep 2
 }
 
@@ -134,7 +136,7 @@ USAGE=$(cat << 'EOM'
             -n          Node Termination Handler Docker Image
             -d          use GOPROXY=direct to bypass proxy.golang.org
             -o          Override path w/ your own kubectl and kind binaries
-            -v          Kubernetes Version (Default: 1.16) [1.12, 1.13, 1.14, 1.15, 1.16, 1.17, and 1.18]
+            -v          Kubernetes Version (Default: 1.20) [1.16, 1.17, 1.18, 1.19, 1.20, and 1.21]
             -w          Webhook Docker Image
 
 EOM

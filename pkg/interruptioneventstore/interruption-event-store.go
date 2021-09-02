@@ -30,6 +30,7 @@ type Store struct {
 	interruptionEventStore map[string]*monitor.InterruptionEvent
 	ignoredEvents          map[string]struct{}
 	atLeastOneEvent        bool
+	Workers                chan int
 }
 
 // New Creates a new interruption event store
@@ -38,6 +39,7 @@ func New(nthConfig config.Config) *Store {
 		NthConfig:              nthConfig,
 		interruptionEventStore: make(map[string]*monitor.InterruptionEvent),
 		ignoredEvents:          make(map[string]struct{}),
+		Workers:                make(chan int, nthConfig.Workers),
 	}
 }
 
@@ -59,12 +61,11 @@ func (s *Store) AddInterruptionEvent(interruptionEvent *monitor.InterruptionEven
 
 	s.Lock()
 	defer s.Unlock()
-	log.Log().Interface("event", interruptionEvent).Msg("Adding new event to the event store")
+	log.Info().Interface("event", interruptionEvent).Msg("Adding new event to the event store")
 	s.interruptionEventStore[interruptionEvent.EventID] = interruptionEvent
 	if _, ignored := s.ignoredEvents[interruptionEvent.EventID]; !ignored {
 		s.atLeastOneEvent = true
 	}
-	return
 }
 
 // GetActiveEvent returns true if there are interruption events in the internal store
@@ -93,7 +94,7 @@ func (s *Store) ShouldDrainNode() bool {
 
 func (s *Store) shouldEventDrain(interruptionEvent *monitor.InterruptionEvent) bool {
 	_, ignored := s.ignoredEvents[interruptionEvent.EventID]
-	if !ignored && !interruptionEvent.Drained && s.TimeUntilDrain(interruptionEvent) <= 0 {
+	if !ignored && !interruptionEvent.NodeProcessed && s.TimeUntilDrain(interruptionEvent) <= 0 {
 		return true
 	}
 	return false
@@ -103,22 +104,22 @@ func (s *Store) shouldEventDrain(interruptionEvent *monitor.InterruptionEvent) b
 func (s *Store) TimeUntilDrain(interruptionEvent *monitor.InterruptionEvent) time.Duration {
 	nodeTerminationGracePeriod := time.Duration(s.NthConfig.NodeTerminationGracePeriod) * time.Second
 	drainTime := interruptionEvent.StartTime.Add(-1 * nodeTerminationGracePeriod)
-	return drainTime.Sub(time.Now())
+	return time.Until(drainTime)
 }
 
-// MarkAllAsDrained should be called after the node has been drained to prevent further unnecessary drain calls to the k8s api
-func (s *Store) MarkAllAsDrained(nodeName string) {
+// MarkAllAsProcessed should be called after the node has been drained to prevent further unnecessary drain calls to the k8s api
+func (s *Store) MarkAllAsProcessed(nodeName string) {
 	s.Lock()
 	defer s.Unlock()
 	for _, interruptionEvent := range s.interruptionEventStore {
 		if interruptionEvent.NodeName == nodeName {
-			interruptionEvent.Drained = true
+			interruptionEvent.NodeProcessed = true
 		}
 	}
 }
 
 // IgnoreEvent will store an event ID so that monitor loops cannot write to the store with the same event ID
-// Drain actions are ignored on the passed in event ID by setting the Drained flag to true
+// Drain actions are ignored on the passed in event ID by setting the NodeProcessed flag to true
 func (s *Store) IgnoreEvent(eventID string) {
 	if eventID == "" {
 		return

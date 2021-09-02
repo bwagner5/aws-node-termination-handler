@@ -4,14 +4,19 @@ kind: PodSecurityPolicy
 metadata:
   name: {{ template "aws-node-termination-handler.fullname" . }}
   labels:
-{{ include "aws-node-termination-handler.labels" . | indent 4 }}
+    {{- include "aws-node-termination-handler.labels" . | nindent 4 }}
   annotations:
     seccomp.security.alpha.kubernetes.io/allowedProfileNames: '*'
 spec:
   privileged: false
   hostIPC: false
-  hostNetwork: {{ .Values.useHostNetwork }} 
+  hostNetwork: {{ .Values.useHostNetwork }}
   hostPID: false
+{{- if and .Values.rbac.pspEnabled .Values.enablePrometheusServer }}
+  hostPorts:
+  - min: {{ .Values.prometheusServerPort }}
+    max: {{ .Values.prometheusServerPort }}
+{{- end }}
   readOnlyRootFilesystem: false
   allowPrivilegeEscalation: false
   allowedCapabilities:
@@ -27,12 +32,13 @@ spec:
   volumes:
     - '*'
 ---
-kind: ClusterRole
+kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: {{ template "aws-node-termination-handler.fullname" . }}-psp
+  namespace: {{ .Release.Namespace }}
   labels:
-{{ include "aws-node-termination-handler.labels" . | indent 4 }}
+    {{- include "aws-node-termination-handler.labels" . | nindent 4 }}
 rules:
   - apiGroups: ['policy']
     resources: ['podsecuritypolicies']
@@ -44,11 +50,12 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ template "aws-node-termination-handler.fullname" . }}-psp
+  namespace: {{ .Release.Namespace }}
   labels:
-{{ include "aws-node-termination-handler.labels" . | indent 4 }}
+    {{- include "aws-node-termination-handler.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: {{ template "aws-node-termination-handler.fullname" . }}-psp
 subjects:
   - kind: ServiceAccount

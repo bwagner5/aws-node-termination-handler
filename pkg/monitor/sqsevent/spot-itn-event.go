@@ -48,7 +48,7 @@ type SpotInterruptionDetail struct {
 	InstanceAction string `json:"instance-action"`
 }
 
-func (m SQSMonitor) spotITNTerminationToInterruptionEvent(event EventBridgeEvent, messages []*sqs.Message) (monitor.InterruptionEvent, error) {
+func (m SQSMonitor) spotITNTerminationToInterruptionEvent(event EventBridgeEvent, message *sqs.Message) (monitor.InterruptionEvent, error) {
 	spotInterruptionDetail := &SpotInterruptionDetail{}
 	err := json.Unmarshal(event.Detail, spotInterruptionDetail)
 	if err != nil {
@@ -59,17 +59,18 @@ func (m SQSMonitor) spotITNTerminationToInterruptionEvent(event EventBridgeEvent
 	if err != nil {
 		return monitor.InterruptionEvent{}, err
 	}
-
+	asgName, _ := m.retrieveAutoScalingGroupName(spotInterruptionDetail.InstanceID)
 	interruptionEvent := monitor.InterruptionEvent{
-		EventID:     fmt.Sprintf("spot-itn-event-%x", event.ID),
-		Kind:        SQSTerminateKind,
-		StartTime:   event.getTime(),
-		NodeName:    nodeName,
-		InstanceID:  spotInterruptionDetail.InstanceID,
-		Description: fmt.Sprintf("Spot Interruption event received. Instance will be interrupted at %s \n", event.getTime()),
+		EventID:              fmt.Sprintf("spot-itn-event-%x", event.ID),
+		Kind:                 SQSTerminateKind,
+		AutoScalingGroupName: asgName,
+		StartTime:            event.getTime(),
+		NodeName:             nodeName,
+		InstanceID:           spotInterruptionDetail.InstanceID,
+		Description:          fmt.Sprintf("Spot Interruption event received. Instance %s will be interrupted at %s \n", spotInterruptionDetail.InstanceID, event.getTime()),
 	}
 	interruptionEvent.PostDrainTask = func(interruptionEvent monitor.InterruptionEvent, n node.Node) error {
-		errs := m.deleteMessages([]*sqs.Message{messages[0]})
+		errs := m.deleteMessages([]*sqs.Message{message})
 		if errs != nil {
 			return errs[0]
 		}
@@ -78,7 +79,7 @@ func (m SQSMonitor) spotITNTerminationToInterruptionEvent(event EventBridgeEvent
 	interruptionEvent.PreDrainTask = func(interruptionEvent monitor.InterruptionEvent, n node.Node) error {
 		err := n.TaintSpotItn(interruptionEvent.NodeName, interruptionEvent.EventID)
 		if err != nil {
-			log.Warn().Err(err).Msgf("Unable to taint node with taint %s:%s", node.SpotInterruptionTaint, interruptionEvent.EventID)
+			log.Err(err).Msgf("Unable to taint node with taint %s:%s", node.SpotInterruptionTaint, interruptionEvent.EventID)
 		}
 		return nil
 	}

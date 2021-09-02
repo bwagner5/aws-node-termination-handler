@@ -47,6 +47,8 @@ func TestParseCliArgsEnvSuccess(t *testing.T) {
 	setEnvForTest("ENABLE_SCHEDULED_EVENT_DRAINING", "true")
 	setEnvForTest("ENABLE_SPOT_INTERRUPTION_DRAINING", "false")
 	setEnvForTest("ENABLE_SQS_TERMINATION_DRAINING", "false")
+	setEnvForTest("ENABLE_REBALANCE_MONITORING", "true")
+	setEnvForTest("ENABLE_REBALANCE_DRAINING", "true")
 	setEnvForTest("GRACE_PERIOD", "12345")
 	setEnvForTest("IGNORE_DAEMON_SETS", "false")
 	setEnvForTest("KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_HOST")
@@ -69,6 +71,8 @@ func TestParseCliArgsEnvSuccess(t *testing.T) {
 	h.Equals(t, true, nthConfig.EnableScheduledEventDraining)
 	h.Equals(t, false, nthConfig.EnableSpotInterruptionDraining)
 	h.Equals(t, false, nthConfig.EnableSQSTerminationDraining)
+	h.Equals(t, true, nthConfig.EnableRebalanceMonitoring)
+	h.Equals(t, true, nthConfig.EnableRebalanceDraining)
 	h.Equals(t, false, nthConfig.IgnoreDaemonSets)
 	h.Equals(t, "KUBERNETES_SERVICE_HOST", nthConfig.KubernetesServiceHost)
 	h.Equals(t, "KUBERNETES_SERVICE_PORT", nthConfig.KubernetesServicePort)
@@ -101,6 +105,8 @@ func TestParseCliArgsSuccess(t *testing.T) {
 		"--enable-scheduled-event-draining=true",
 		"--enable-spot-interruption-draining=false",
 		"--enable-sqs-termination-draining=false",
+		"--enable-rebalance-monitoring=true",
+		"--enable-rebalance-draining=true",
 		"--ignore-daemon-sets=false",
 		"--kubernetes-service-host=KUBERNETES_SERVICE_HOST",
 		"--kubernetes-service-port=KUBERNETES_SERVICE_PORT",
@@ -123,6 +129,8 @@ func TestParseCliArgsSuccess(t *testing.T) {
 	h.Equals(t, true, nthConfig.EnableScheduledEventDraining)
 	h.Equals(t, false, nthConfig.EnableSpotInterruptionDraining)
 	h.Equals(t, false, nthConfig.EnableSQSTerminationDraining)
+	h.Equals(t, true, nthConfig.EnableRebalanceMonitoring)
+	h.Equals(t, true, nthConfig.EnableRebalanceDraining)
 	h.Equals(t, false, nthConfig.IgnoreDaemonSets)
 	h.Equals(t, "KUBERNETES_SERVICE_HOST", nthConfig.KubernetesServiceHost)
 	h.Equals(t, "KUBERNETES_SERVICE_PORT", nthConfig.KubernetesServicePort)
@@ -150,6 +158,8 @@ func TestParseCliArgsOverrides(t *testing.T) {
 	setEnvForTest("ENABLE_SCHEDULED_EVENT_DRAINING", "false")
 	setEnvForTest("ENABLE_SPOT_INTERRUPTION_DRAINING", "true")
 	setEnvForTest("ENABLE_SQS_TERMINATION_DRAINING", "false")
+	setEnvForTest("ENABLE_REBALANCE_MONITORING", "true")
+	setEnvForTest("ENABLE_REBALANCE_DRAINING", "true")
 	setEnvForTest("GRACE_PERIOD", "99999")
 	setEnvForTest("IGNORE_DAEMON_SETS", "true")
 	setEnvForTest("KUBERNETES_SERVICE_HOST", "no")
@@ -170,6 +180,8 @@ func TestParseCliArgsOverrides(t *testing.T) {
 		"--enable-scheduled-event-draining=true",
 		"--enable-spot-interruption-draining=false",
 		"--enable-sqs-termination-draining=true",
+		"--enable-rebalance-monitoring=false",
+		"--enable-rebalance-draining=false",
 		"--ignore-daemon-sets=false",
 		"--kubernetes-service-host=KUBERNETES_SERVICE_HOST",
 		"--kubernetes-service-port=KUBERNETES_SERVICE_PORT",
@@ -194,6 +206,8 @@ func TestParseCliArgsOverrides(t *testing.T) {
 	h.Equals(t, true, nthConfig.EnableScheduledEventDraining)
 	h.Equals(t, false, nthConfig.EnableSpotInterruptionDraining)
 	h.Equals(t, true, nthConfig.EnableSQSTerminationDraining)
+	h.Equals(t, false, nthConfig.EnableRebalanceMonitoring)
+	h.Equals(t, false, nthConfig.EnableRebalanceDraining)
 	h.Equals(t, false, nthConfig.IgnoreDaemonSets)
 	h.Equals(t, "KUBERNETES_SERVICE_HOST", nthConfig.KubernetesServiceHost)
 	h.Equals(t, "KUBERNETES_SERVICE_PORT", nthConfig.KubernetesServicePort)

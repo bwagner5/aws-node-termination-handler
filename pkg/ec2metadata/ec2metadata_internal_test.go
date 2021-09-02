@@ -41,6 +41,7 @@ func TestRetry(t *testing.T) {
 	}
 
 	resp, err := retry(numRetries, time.Microsecond, request)
+	h.Assert(t, err != nil, "Should have gotten a \"Request failed\" error")
 	defer resp.Body.Close()
 
 	h.Equals(t, errorMsg, err.Error())
@@ -52,7 +53,8 @@ func TestGetV2Token(t *testing.T) {
 		h.Equals(t, req.Header.Get(tokenTTLHeader), strconv.Itoa(tokenTTL))
 		h.Equals(t, req.URL.String(), tokenRefreshPath)
 		rw.Header().Set(tokenTTLHeader, "100")
-		rw.Write([]byte(`token`))
+		_, err := rw.Write([]byte(`token`))
+		h.Ok(t, err)
 	}))
 	defer server.Close()
 	imds := New(server.URL, 1)
@@ -74,7 +76,8 @@ func TestGetV2TokenBadTTLHeader(t *testing.T) {
 		h.Equals(t, req.Header.Get(tokenTTLHeader), strconv.Itoa(tokenTTL))
 		h.Equals(t, req.URL.String(), tokenRefreshPath)
 		rw.Header().Set(tokenTTLHeader, "badttl")
-		rw.Write([]byte(`token`))
+		_, err := rw.Write([]byte(`token`))
+		h.Ok(t, err)
 	}))
 	defer server.Close()
 	imds := New(server.URL, 1)

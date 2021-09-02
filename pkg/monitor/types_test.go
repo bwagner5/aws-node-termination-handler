@@ -23,7 +23,7 @@ import (
 
 func TestTimeUntilEvent(t *testing.T) {
 	startTime := time.Now().Add(time.Second * 10)
-	expected := startTime.Sub(time.Now()).Round(time.Second)
+	expected := time.Until(startTime).Round(time.Second)
 
 	event := &monitor.InterruptionEvent{
 		StartTime: startTime,
@@ -31,4 +31,36 @@ func TestTimeUntilEvent(t *testing.T) {
 
 	result := event.TimeUntilEvent()
 	h.Equals(t, expected, result.Round(time.Second))
+}
+
+func TestIsRebalanceRecommendation_Monitor_Success(t *testing.T) {
+	monitorEventId := "rebalance-recommendation-"
+	event := &monitor.InterruptionEvent{
+		EventID: monitorEventId,
+	}
+
+	h.Equals(t, true, event.IsRebalanceRecommendation())
+}
+
+func TestIsRebalanceRecommendation_SQS_Success(t *testing.T) {
+	sqsEventId := "rebalance-recommendation-event-"
+	event := &monitor.InterruptionEvent{
+		EventID: sqsEventId,
+	}
+
+	h.Equals(t, true, event.IsRebalanceRecommendation())
+}
+
+func TestIsRebalanceRecommendation_Failure(t *testing.T) {
+	eventId := "reblaance-recommendation"
+	event := &monitor.InterruptionEvent{
+		EventID: eventId,
+	}
+
+	h.Equals(t, false, event.IsRebalanceRecommendation())
+}
+
+func TestIsRebalanceRecommendation_Empty_Failure(t *testing.T) {
+	event := &monitor.InterruptionEvent{}
+	h.Equals(t, false, event.IsRebalanceRecommendation())
 }

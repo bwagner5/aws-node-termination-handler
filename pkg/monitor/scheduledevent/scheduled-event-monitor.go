@@ -91,10 +91,13 @@ func (m ScheduledEventMonitor) checkForScheduledEvents() ([]monitor.Interruption
 		if err != nil {
 			return nil, fmt.Errorf("Unable to parse scheduled event start time: %w", err)
 		}
-		notAfter, err := time.Parse(scheduledEventDateFormat, scheduledEvent.NotAfter)
-		if err != nil {
-			notAfter = notBefore
-			log.Log().Err(err).Msg("Unable to parse scheduled event end time, continuing")
+		notAfter := notBefore
+		if len(scheduledEvent.NotAfter) > 0 {
+			notAfter, err = time.Parse(scheduledEventDateFormat, scheduledEvent.NotAfter)
+			if err != nil {
+				notAfter = notBefore
+				log.Err(err).Msg("Unable to parse scheduled event end time, continuing")
+			}
 		}
 		events = append(events, monitor.InterruptionEvent{
 			EventID:      scheduledEvent.EventID,
@@ -125,7 +128,7 @@ func uncordonAfterRebootPreDrain(interruptionEvent monitor.InterruptionEvent, n 
 	// if the node is already marked as unschedulable, then don't do anything
 	unschedulable, err := n.IsUnschedulable(nodeName)
 	if err == nil && unschedulable {
-		log.Log().Msg("Node is already marked unschedulable, not taking any action to add uncordon label.")
+		log.Debug().Msg("Node is already marked unschedulable, not taking any action to add uncordon label.")
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("Encountered an error while checking if the node is unschedulable. Not setting an uncordon label: %w", err)
@@ -134,7 +137,7 @@ func uncordonAfterRebootPreDrain(interruptionEvent monitor.InterruptionEvent, n 
 	if err != nil {
 		return fmt.Errorf("Unable to mark the node for uncordon: %w", err)
 	}
-	log.Log().Msg("Successfully applied uncordon after reboot action label to node.")
+	log.Info().Msg("Successfully applied uncordon after reboot action label to node.")
 	return nil
 }
 

@@ -57,7 +57,7 @@ type LifecycleDetail struct {
 	LifecycleTransition  string `json:"LifecycleTransition"`
 }
 
-func (m SQSMonitor) asgTerminationToInterruptionEvent(event EventBridgeEvent, messages []*sqs.Message) (monitor.InterruptionEvent, error) {
+func (m SQSMonitor) asgTerminationToInterruptionEvent(event EventBridgeEvent, message *sqs.Message) (monitor.InterruptionEvent, error) {
 	lifecycleDetail := &LifecycleDetail{}
 	err := json.Unmarshal(event.Detail, lifecycleDetail)
 	if err != nil {
@@ -70,12 +70,13 @@ func (m SQSMonitor) asgTerminationToInterruptionEvent(event EventBridgeEvent, me
 	}
 
 	interruptionEvent := monitor.InterruptionEvent{
-		EventID:     fmt.Sprintf("asg-lifecycle-term-%x", event.ID),
-		Kind:        SQSTerminateKind,
-		StartTime:   event.getTime(),
-		NodeName:    nodeName,
-		InstanceID:  lifecycleDetail.EC2InstanceID,
-		Description: fmt.Sprintf("ASG Lifecycle Termination event received. Instance will be interrupted at %s \n", event.getTime()),
+		EventID:              fmt.Sprintf("asg-lifecycle-term-%x", event.ID),
+		Kind:                 SQSTerminateKind,
+		AutoScalingGroupName: lifecycleDetail.AutoScalingGroupName,
+		StartTime:            event.getTime(),
+		NodeName:             nodeName,
+		InstanceID:           lifecycleDetail.EC2InstanceID,
+		Description:          fmt.Sprintf("ASG Lifecycle Termination event received. Instance will be interrupted at %s \n", event.getTime()),
 	}
 
 	interruptionEvent.PostDrainTask = func(interruptionEvent monitor.InterruptionEvent, _ node.Node) error {
@@ -94,7 +95,7 @@ func (m SQSMonitor) asgTerminationToInterruptionEvent(event EventBridgeEvent, me
 		log.Info().Msgf("Completed ASG Lifecycle Hook (%s) for instance %s",
 			lifecycleDetail.LifecycleHookName,
 			lifecycleDetail.EC2InstanceID)
-		errs := m.deleteMessages(messages)
+		errs := m.deleteMessages([]*sqs.Message{message})
 		if errs != nil {
 			return errs[0]
 		}
@@ -104,17 +105,9 @@ func (m SQSMonitor) asgTerminationToInterruptionEvent(event EventBridgeEvent, me
 	interruptionEvent.PreDrainTask = func(interruptionEvent monitor.InterruptionEvent, n node.Node) error {
 		err := n.TaintASGLifecycleTermination(interruptionEvent.NodeName, interruptionEvent.EventID)
 		if err != nil {
-			log.Warn().Err(err).Msgf("Unable to taint node with taint %s:%s", node.ASGLifecycleTerminationTaint, interruptionEvent.EventID)
+			log.Err(err).Msgf("Unable to taint node with taint %s:%s", node.ASGLifecycleTerminationTaint, interruptionEvent.EventID)
 		}
 		return nil
-	}
-
-	if nodeName == "" {
-		log.Info().Msg("Node name is empty, assuming instance was already terminated, deleting queue message")
-		errs := m.deleteMessages(messages)
-		if errs != nil {
-			log.Warn().Errs("errors", errs).Msg("There was an error deleting the messages")
-		}
 	}
 
 	return interruptionEvent, nil

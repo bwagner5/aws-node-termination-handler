@@ -3,12 +3,16 @@ apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
   name: {{ template "aws-node-termination-handler.fullname" . }}
+  {{- if .Values.podMonitor.namespace }}
+  namespace: {{ .Values.podMonitor.namespace }}
+  {{- else }}
   namespace: {{ .Release.Namespace }}
+  {{- end }}
   labels:
-{{ include "aws-node-termination-handler.labels" . | indent 4 }}
-{{- with .Values.podMonitor.labels }}
-{{ toYaml . | indent 4 }}
-{{- end }}
+    {{- include "aws-node-termination-handler.labels" . | nindent 4 }}
+  {{- with .Values.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   jobLabel: {{ include "aws-node-termination-handler.name" . }}
   namespaceSelector:
@@ -21,5 +25,5 @@ spec:
   sampleLimit: {{ .Values.podMonitor.sampleLimit }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "aws-node-termination-handler.name" . }}
+      {{- include "aws-node-termination-handler.selectorLabels" . | nindent 6 }}
 {{- end }}

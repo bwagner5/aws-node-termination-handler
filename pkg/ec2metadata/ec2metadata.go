@@ -32,8 +32,12 @@ const (
 	SpotInstanceActionPath = "/latest/meta-data/spot/instance-action"
 	// ScheduledEventPath is the context path to events/maintenance/scheduled within IMDS
 	ScheduledEventPath = "/latest/meta-data/events/maintenance/scheduled"
+	// RebalanceRecommendationPath is the context path to events/recommendations/rebalance within IMDS
+	RebalanceRecommendationPath = "/latest/meta-data/events/recommendations/rebalance"
 	// InstanceIDPath path to instance id
 	InstanceIDPath = "/latest/meta-data/instance-id"
+	// InstanceLifeCycle path to instance life cycle
+	InstanceLifeCycle = "/latest/meta-data/instance-life-cycle"
 	// InstanceTypePath path to instance type
 	InstanceTypePath = "/latest/meta-data/instance-type"
 	// PublicHostnamePath path to public hostname
@@ -95,17 +99,23 @@ type InstanceAction struct {
 	Time   string `json:"time"`
 }
 
+// RebalanceRecommendation metadata structure for json parsing
+type RebalanceRecommendation struct {
+	NoticeTime string `json:"noticeTime"`
+}
+
 // NodeMetadata contains information that applies to every drain event
 type NodeMetadata struct {
-	AccountId        string `json:"accountId"`
-	InstanceID       string `json:"instanceId"`
-	InstanceType     string `json:"instanceType"`
-	PublicHostname   string `json:"publicHostname"`
-	PublicIP         string `json:"publicIp"`
-	LocalHostname    string `json:"localHostname"`
-	LocalIP          string `json:"privateIp"`
-	AvailabilityZone string `json:"availabilityZone"`
-	Region           string `json:"region"`
+	AccountId         string `json:"accountId"`
+	InstanceID        string `json:"instanceId"`
+	InstanceLifeCycle string `json:"instanceLifeCycle"`
+	InstanceType      string `json:"instanceType"`
+	PublicHostname    string `json:"publicHostname"`
+	PublicIP          string `json:"publicIp"`
+	LocalHostname     string `json:"localHostname"`
+	LocalIP           string `json:"privateIp"`
+	AvailabilityZone  string `json:"availabilityZone"`
+	Region            string `json:"region"`
 }
 
 // New constructs an instance of the Service client
@@ -114,7 +124,7 @@ func New(metadataURL string, tries int) *Service {
 		metadataURL: metadataURL,
 		tries:       tries,
 		httpClient: http.Client{
-			Timeout: 5 * time.Second,
+			Timeout: 2 * time.Second,
 			Transport: &http.Transport{
 				MaxIdleConns:    10,
 				IdleConnTimeout: 30 * time.Second,
@@ -162,6 +172,27 @@ func (e *Service) GetSpotITNEvent() (instanceAction *InstanceAction, err error) 
 	return instanceAction, nil
 }
 
+// GetRebalanceRecommendationEvent retrieves rebalance recommendation events from imds
+func (e *Service) GetRebalanceRecommendationEvent() (rebalanceRec *RebalanceRecommendation, err error) {
+	resp, err := e.Request(RebalanceRecommendationPath)
+	// 404s are normal when querying for the 'events/recommendations/rebalance' path
+	if resp != nil && resp.StatusCode == 404 {
+		return nil, nil
+	} else if resp != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+		return nil, fmt.Errorf("Metadata request received http status code: %d", resp.StatusCode)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("Unable to parse metadata response: %w", err)
+	}
+	defer resp.Body.Close()
+
+	err = json.NewDecoder(resp.Body).Decode(&rebalanceRec)
+	if err != nil {
+		return nil, fmt.Errorf("Could not decode rebalance recommendation response: %w", err)
+	}
+	return rebalanceRec, nil
+}
+
 // GetMetadataInfo generic function for retrieving ec2 metadata
 func (e *Service) GetMetadataInfo(path string) (info string, err error) {
 	resp, err := e.Request(path)
@@ -195,7 +226,7 @@ func (e *Service) Request(contextPath string) (*http.Response, error) {
 			if err != nil {
 				e.v2Token = ""
 				e.tokenTTL = -1
-				log.Log().Err(err).Msg("Unable to retrieve an IMDSv2 token, continuing with IMDSv1")
+				log.Debug().Msgf("Unable to retrieve an IMDSv2 token, continuing with IMDSv1, %v", err)
 			} else {
 				e.v2Token = token
 				e.tokenTTL = ttl
@@ -239,7 +270,7 @@ func (e *Service) getV2Token() (string, int, error) {
 	httpReq := func() (*http.Response, error) {
 		return e.httpClient.Do(req)
 	}
-	log.Log().Msg("Trying to get token from IMDSv2")
+	log.Debug().Msg("Trying to get token from IMDSv2")
 	resp, err := retry(1, 2*time.Second, httpReq)
 	if err != nil {
 		return "", -1, err
@@ -256,7 +287,7 @@ func (e *Service) getV2Token() (string, int, error) {
 	if err != nil {
 		return "", -1, fmt.Errorf("IMDS v2 Token TTL header not sent in response: %w", err)
 	}
-	log.Log().Msg("Got token from IMDSv2")
+	log.Debug().Msg("Got token from IMDSv2")
 	return string(token), ttl, nil
 }
 
@@ -279,8 +310,7 @@ func retry(attempts int, sleep time.Duration, httpReq func() (*http.Response, er
 			jitter := time.Duration(rand.Int63n(int64(sleep)))
 			sleep = sleep + jitter/2
 
-			log.Log().Msgf("Request failed. Attempts remaining: %d", attempts)
-			log.Log().Msgf("Sleep for %s seconds", sleep)
+			log.Warn().Msgf("Request failed. Attempts remaining: %d, sleeping for %s seconds", attempts, sleep)
 			time.Sleep(sleep)
 			return retry(attempts, 2*sleep, httpReq)
 		}
@@ -292,10 +322,14 @@ func retry(attempts int, sleep time.Duration, httpReq func() (*http.Response, er
 // GetNodeMetadata attempts to gather additional ec2 instance information from the metadata service
 func (e *Service) GetNodeMetadata() NodeMetadata {
 	var metadata NodeMetadata
-	identityDoc, _ := e.GetMetadataInfo(IdentityDocPath)
-	err := json.NewDecoder(strings.NewReader(identityDoc)).Decode(&metadata)
+	identityDoc, err := e.GetMetadataInfo(IdentityDocPath)
 	if err != nil {
-		log.Log().Msg("Unable to fetch instance identity document from ec2 metadata")
+		log.Err(err).Msg("Unable to fetch metadata from IMDS")
+		return metadata
+	}
+	err = json.NewDecoder(strings.NewReader(identityDoc)).Decode(&metadata)
+	if err != nil {
+		log.Warn().Msg("Unable to fetch instance identity document from ec2 metadata")
 		metadata.InstanceID, _ = e.GetMetadataInfo(InstanceIDPath)
 		metadata.InstanceType, _ = e.GetMetadataInfo(InstanceTypePath)
 		metadata.LocalIP, _ = e.GetMetadataInfo(LocalIPPath)
@@ -304,11 +338,12 @@ func (e *Service) GetNodeMetadata() NodeMetadata {
 			metadata.Region = metadata.AvailabilityZone[0 : len(metadata.AvailabilityZone)-1]
 		}
 	}
+	metadata.InstanceLifeCycle, _ = e.GetMetadataInfo(InstanceLifeCycle)
+	metadata.LocalHostname, _ = e.GetMetadataInfo(LocalHostnamePath)
 	metadata.PublicHostname, _ = e.GetMetadataInfo(PublicHostnamePath)
 	metadata.PublicIP, _ = e.GetMetadataInfo(PublicIPPath)
-	metadata.LocalHostname, _ = e.GetMetadataInfo(LocalHostnamePath)
 
-	log.Log().Interface("metadata", metadata).Msg("Startup Metadata Retrieved")
+	log.Info().Interface("metadata", metadata).Msg("Startup Metadata Retrieved")
 
 	return metadata
 }
